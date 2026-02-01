@@ -9,15 +9,15 @@ import { SkillsHandler } from './skills/index.js';
 import { MarketState, Outcome } from './types.js';
 
 /**
- * PolyBook Orchestrator
+ * PolyBook CLOB Service
  *
- * Main orchestrator service that:
+ * Main CLOB service that:
  * - Manages market lifecycle
  * - Routes agent skill requests
  * - Coordinates CLOB sessions
  * - (In production) Listens to on-chain events
  */
-class PolyBookOrchestrator {
+class PolyBookCLOB {
     private config = getConfig();
     private marketManager: MarketManager;
     private skillsHandler: SkillsHandler;
@@ -28,11 +28,11 @@ class PolyBookOrchestrator {
     }
 
     /**
-     * Starts the orchestrator
+     * Starts the CLOB service
      */
     async start(): Promise<void> {
         console.log('╔══════════════════════════════════════════════════════╗');
-        console.log('║          PolyBook Orchestrator Starting...           ║');
+        console.log('║             PolyBook CLOB Service Starting...        ║');
         console.log('╠══════════════════════════════════════════════════════╣');
         console.log(`║  Chain ID: ${this.config.chainId.toString().padEnd(42)}║`);
         console.log(`║  Yellow WS: ${this.config.yellowWsUrl.slice(0, 40).padEnd(41)}║`);
@@ -206,5 +206,5 @@ class PolyBookOrchestrator {
 }
 
 // Main entry
-const orchestrator = new PolyBookOrchestrator();
-orchestrator.start().catch(console.error);
+const clobService = new PolyBookCLOB();
+clobService.start().catch(console.error);

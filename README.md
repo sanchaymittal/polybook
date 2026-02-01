@@ -101,20 +101,20 @@ forge test
 forge script script/Deploy.s.sol --rpc-url $ALCHEMY_RPC_URL --broadcast
 ```
 
-### 2. Run Orchestrator
+### 2. Run CLOB
 
 ```bash
-cd orchestrator
+cd clob
 
 # Install dependencies
-npm install
+pnpm install
 
 # Copy environment template
 cp .env.example .env
 # Edit .env with your configuration
 
 # Run in development
-npm run dev
+pnpm run dev
 ```
 
 ### 3. Agent Integration

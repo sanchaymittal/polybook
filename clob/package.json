@@ -1,5 +1,5 @@
 {
-    "name": "polybook-orchestrator",
+    "name": "polybook-clob",
     "version": "1.0.0",
     "description": "PolyBook Market Orchestrator - Off-chain CLOB and Yellow L2 Integration",
     "main": "dist/index.js",

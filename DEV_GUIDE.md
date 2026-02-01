@@ -78,8 +78,8 @@ cd contracts
 forge install
 forge test
 
-# 4. Setup Orchestrator
-cd ../orchestrator
+# 4. Setup CLOB
+cd ../clob
 pnpm install
 
 # 5. Connect Keys
