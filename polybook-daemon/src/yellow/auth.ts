@@ -61,10 +61,24 @@ export async function authenticateWithYellow(privateKey: Hex): Promise<AuthResul
             try {
                 console.log('Received auth_challenge, signing...');
 
-                // Type the message properly
-                const challengeResponse = message as {
-                    res?: [number, string, unknown];
-                    result?: { challenge_message?: string };
+                // Parse raw message (snake_case)
+                const rawMsg = message as {
+                    res?: [number, string, { challenge_message: string }];
+                    result?: { challenge_message: string };
+                };
+
+                const rawParams = rawMsg.result || rawMsg.res?.[2];
+
+                if (!rawParams?.challenge_message) {
+                    throw new Error('Missing challenge_message in response');
+                }
+
+                // Construct SDK-compatible object (camelCase)
+                const challengeResponse = {
+                    method: 'auth_challenge',
+                    params: {
+                        challengeMessage: rawParams.challenge_message,
+                    },
                 };
 
                 // Create EIP-712 message signer
@@ -84,7 +98,7 @@ export async function authenticateWithYellow(privateKey: Hex): Promise<AuthResul
                 // Create and send auth_verify
                 const authVerifyMsg = await createAuthVerifyMessage(
                     eip712Signer,
-                    challengeResponse as Parameters<typeof createAuthVerifyMessage>[1]
+                    challengeResponse as any // Cast to satisfy SDK type
                 );
 
                 console.log('Sending auth_verify...');
@@ -101,12 +115,13 @@ export async function authenticateWithYellow(privateKey: Hex): Promise<AuthResul
         // Handle auth_verify response (success or failure)
         client.on('auth_verify', (message: unknown) => {
             try {
-                const verifyResponse = message as {
+                // Parse raw message (snake_case)
+                const rawMsg = message as {
                     res?: [number, string, { success?: boolean; jwt_token?: string }];
                     result?: { success?: boolean; jwt_token?: string };
                 };
 
-                const params = verifyResponse.result || verifyResponse.res?.[2];
+                const params = rawMsg.result || rawMsg.res?.[2];
 
                 if (params?.success) {
                     console.log('Authentication successful!');
