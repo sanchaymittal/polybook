@@ -1,102 +1,104 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {IMarketRegistry} from "./interfaces/IMarketRegistry.sol";
-import {IYellowVerifier} from "./interfaces/IYellowVerifier.sol";
-
-/**
- * @title IBinaryMarket
- * @notice Interface for individual binary prediction markets.
- */
-interface IBinaryMarket {
-    /// @notice Emitted when market trading starts
-    event MarketStarted(uint256 indexed marketId, int256 priceAtStart);
-
-    /// @notice Emitted when market is resolved
-    event MarketResolved(uint256 indexed marketId, IMarketRegistry.Outcome outcome);
-
-    /// @notice Emitted when an agent claims their payout
-    event PayoutClaimed(uint256 indexed marketId, address indexed agent, uint256 amount);
-
-    function marketId() external view returns (uint256);
-    function slug() external view returns (string memory);
-    function startTimestamp() external view returns (uint256);
-    function expiryTimestamp() external view returns (uint256);
-    function started() external view returns (bool);
-    function resolved() external view returns (bool);
-    function priceAtStart() external view returns (int256);
-    function outcome() external view returns (IMarketRegistry.Outcome);
-
-    function startMarket() external;
-    function resolveMarket(bytes32 stateRoot, bytes calldata proof) external;
-    function claim() external;
-}
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {ERC1155Holder} from "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Holder.sol";
+import {IConditionalTokens} from "./interfaces/IConditionalTokens.sol";
+import {IOracleAdapter} from "./interfaces/IOracleAdapter.sol";
 
 /**
  * @title BinaryMarket
- * @notice A binary prediction market for BTC price (UP/DOWN).
- * @dev Template: BTC_UP_DOWN
+ * @notice A binary prediction market for BTC price (UP/DOWN) using Gnosis CTF.
+ * @dev Lifecycle: PENDING → ACTIVE → RESOLVED
  *
- * Lifecycle:
- * 1. PENDING: Market created, waiting for startTimestamp
- * 2. ACTIVE: Trading open between startTimestamp and expiryTimestamp
- * 3. RESOLVED: Outcome determined, payouts available
+ * Integration with Gnosis Conditional Tokens Framework:
+ * - prepareCondition: Creates the binary condition
+ * - splitPosition: Mints UP and DOWN tokens from collateral
+ * - reportPayouts: Oracle adapter resolves the market
+ * - redeemPositions: Winners redeem tokens for collateral
  */
-contract BinaryMarket is IBinaryMarket {
+contract BinaryMarket is ERC1155Holder {
+    // ============ Constants ============
+
+    /// @notice Number of outcomes (UP, DOWN)
+    uint256 private constant OUTCOME_COUNT = 2;
+
+    /// @notice Index set for UP outcome (binary: 01)
+    uint256 private constant UP_INDEX_SET = 1;
+
+    /// @notice Index set for DOWN outcome (binary: 10)
+    uint256 private constant DOWN_INDEX_SET = 2;
+
     // ============ Immutable State ============
+
+    /// @notice Gnosis Conditional Tokens contract
+    IConditionalTokens public immutable ctf;
+
+    /// @notice Oracle adapter for price resolution
+    IOracleAdapter public immutable oracleAdapter;
+
+    /// @notice Collateral token (ytest.usd)
+    IERC20 public immutable collateralToken;
+
+    /// @notice Unique market identifier
+    uint256 public immutable marketId;
+
+    /// @notice Human-readable unique slug
+    string public slug;
+
+    /// @notice When trading can begin
+    uint256 public immutable startTimestamp;
+
+    /// @notice When trading ends and resolution occurs
+    uint256 public immutable expiryTimestamp;
 
     /// @notice The market registry that created this market
     address public immutable registry;
 
-    /// @notice Unique market identifier
-    uint256 public immutable override marketId;
-
-    /// @notice Human-readable unique slug
-    string public override slug;
-
-    /// @notice When trading can begin
-    uint256 public immutable override startTimestamp;
-
-    /// @notice When trading ends
-    uint256 public immutable override expiryTimestamp;
-
-    /// @notice Chainlink BTC/USD price feed
-    address public immutable oracleFeed;
-
-    /// @notice Yellow state verifier contract
-    IYellowVerifier public immutable verifier;
-
     // ============ Mutable State ============
 
+    /// @notice Unique question ID for CTF condition
+    bytes32 public questionId;
+
+    /// @notice CTF condition ID
+    bytes32 public conditionId;
+
+    /// @notice Whether the condition has been prepared
+    bool public initialized;
+
     /// @notice Whether the market has started
-    bool public override started;
+    bool public started;
 
     /// @notice Whether the market has been resolved
-    bool public override resolved;
+    bool public resolved;
 
-    /// @notice BTC/USD price at market start
-    int256 public override priceAtStart;
+    /// @notice BTC price at market start
+    int256 public priceAtStart;
 
-    /// @notice The resolved outcome
-    IMarketRegistry.Outcome public override outcome;
+    // ============ Events ============
 
-    /// @notice Final state root from Yellow L2
-    bytes32 public finalStateRoot;
+    /// @notice Emitted when market is initialized
+    event MarketInitialized(bytes32 indexed conditionId, bytes32 indexed questionId);
 
-    /// @notice Tracks which agents have claimed
-    mapping(address => bool) public claimed;
+    /// @notice Emitted when positions are minted
+    event PositionsMinted(address indexed account, uint256 amount);
+
+    /// @notice Emitted when market trading starts
+    event MarketStarted(uint256 indexed marketId, int256 priceAtStart);
+
+    /// @notice Emitted when market is resolved
+    event MarketResolved(uint256 indexed marketId, bool isUp);
 
     // ============ Errors ============
 
+    error AlreadyInitialized();
+    error NotInitialized();
     error TooEarly();
     error AlreadyStarted();
     error NotStarted();
     error NotExpired();
     error AlreadyResolved();
-    error NotResolved();
-    error InvalidProof();
-    error AlreadyClaimed();
-    error NoPayout();
+    error InsufficientAllowance();
     error OnlyRegistry();
 
     // ============ Modifiers ============
@@ -114,101 +116,185 @@ contract BinaryMarket is IBinaryMarket {
      * @param _slug Human-readable identifier
      * @param _startTimestamp When trading begins
      * @param _expiryTimestamp When trading ends
-     * @param _oracleFeed Chainlink BTC/USD feed address
-     * @param _verifier Yellow state verifier address
+     * @param _ctf Gnosis Conditional Tokens contract
+     * @param _oracleAdapter Oracle adapter for resolution
+     * @param _collateralToken Collateral token (ytest.usd)
      */
     constructor(
         uint256 _marketId,
         string memory _slug,
         uint256 _startTimestamp,
         uint256 _expiryTimestamp,
-        address _oracleFeed,
-        address _verifier
+        address _ctf,
+        address _oracleAdapter,
+        address _collateralToken
     ) {
         registry = msg.sender;
         marketId = _marketId;
         slug = _slug;
         startTimestamp = _startTimestamp;
         expiryTimestamp = _expiryTimestamp;
-        oracleFeed = _oracleFeed;
-        verifier = IYellowVerifier(_verifier);
+        ctf = IConditionalTokens(_ctf);
+        oracleAdapter = IOracleAdapter(_oracleAdapter);
+        collateralToken = IERC20(_collateralToken);
     }
 
-    // ============ External Functions ============
+    // ============ Initialization ============
+
+    /**
+     * @notice Initializes the market by preparing the CTF condition.
+     * @dev Must be called before any other operations.
+     */
+    function initialize() external {
+        if (initialized) revert AlreadyInitialized();
+
+        // Generate unique question ID from market parameters
+        questionId = keccak256(
+            abi.encodePacked(address(this), marketId, slug, startTimestamp, expiryTimestamp)
+        );
+
+        // Get the oracle address from the adapter
+        address oracle = oracleAdapter.oracle();
+
+        // Prepare the condition in CTF
+        ctf.prepareCondition(oracle, questionId, OUTCOME_COUNT);
+
+        // Compute and store the condition ID
+        conditionId = ctf.getConditionId(oracle, questionId, OUTCOME_COUNT);
+
+        initialized = true;
+
+        emit MarketInitialized(conditionId, questionId);
+    }
+
+    // ============ Minting ============
+
+    /**
+     * @notice Mints UP and DOWN tokens by depositing collateral.
+     * @dev Caller must approve this contract for collateral transfer.
+     * @param amount Amount of collateral to deposit
+     */
+    function mint(uint256 amount) external {
+        if (!initialized) revert NotInitialized();
+
+        // Transfer collateral from caller to this contract
+        bool success = collateralToken.transferFrom(msg.sender, address(this), amount);
+        if (!success) revert InsufficientAllowance();
+
+        // Approve CTF to spend collateral
+        collateralToken.approve(address(ctf), amount);
+
+        // Build partition for binary outcomes [UP, DOWN]
+        uint256[] memory partition = new uint256[](2);
+        partition[0] = UP_INDEX_SET;   // 0b01 = UP
+        partition[1] = DOWN_INDEX_SET; // 0b10 = DOWN
+
+        // Split collateral into UP and DOWN tokens
+        ctf.splitPosition(
+            collateralToken,
+            bytes32(0), // No parent collection
+            conditionId,
+            partition,
+            amount
+        );
+
+        // Transfer the minted tokens to the caller
+        // Note: CTF mints tokens to msg.sender of splitPosition (this contract)
+        // We need to transfer them to the actual user
+        _transferPositionsToCaller(amount);
+
+        emit PositionsMinted(msg.sender, amount);
+    }
+
+    /**
+     * @dev Transfers minted position tokens from this contract to the caller.
+     */
+    function _transferPositionsToCaller(uint256 amount) internal {
+        // Get position IDs
+        bytes32 upCollectionId = ctf.getCollectionId(bytes32(0), conditionId, UP_INDEX_SET);
+        bytes32 downCollectionId = ctf.getCollectionId(bytes32(0), conditionId, DOWN_INDEX_SET);
+
+        uint256 upPosId = ctf.getPositionId(collateralToken, upCollectionId);
+        uint256 downPosId = ctf.getPositionId(collateralToken, downCollectionId);
+
+        // CTF is ERC-1155, so we use safeTransferFrom
+        // Note: This requires the caller to implement ERC1155Receiver if it's a contract
+        IERC1155(address(ctf)).safeTransferFrom(
+            address(this),
+            msg.sender,
+            upPosId,
+            amount,
+            ""
+        );
+        IERC1155(address(ctf)).safeTransferFrom(
+            address(this),
+            msg.sender,
+            downPosId,
+            amount,
+            ""
+        );
+    }
+
+    // ============ Market Lifecycle ============
 
     /**
      * @notice Starts the market and records the initial BTC price.
-     * @dev Can only be called after startTimestamp.
+     * @dev Can be called by anyone after startTimestamp.
      */
-    function startMarket() external override {
+    function start() external {
         if (block.timestamp < startTimestamp) revert TooEarly();
+        if (!initialized) revert NotInitialized();
         if (started) revert AlreadyStarted();
 
-        // Fetch current BTC/USD price from Chainlink
-        (, int256 price, , , ) = IChainlinkAggregatorMinimal(oracleFeed).latestRoundData();
-        priceAtStart = price;
+        // Snapshot the current price
+        priceAtStart = oracleAdapter.getPrice();
         started = true;
 
-        emit MarketStarted(marketId, price);
+        emit MarketStarted(marketId, priceAtStart);
     }
 
     /**
-     * @notice Resolves the market with the final state from Yellow L2.
-     * @param stateRoot The Merkle root of final positions
-     * @param proof Proof signed by Yellow validators
+     * @notice Resolves the market via the oracle adapter.
+     * @dev Can be called by anyone after expiryTimestamp.
      */
-    function resolveMarket(bytes32 stateRoot, bytes calldata proof) external override {
+    function resolve() external {
         if (block.timestamp < expiryTimestamp) revert NotExpired();
         if (!started) revert NotStarted();
         if (resolved) revert AlreadyResolved();
 
-        // Verify the Yellow state proof
-        if (!verifier.verify(stateRoot, proof)) revert InvalidProof();
+        // Oracle adapter will call reportPayouts on CTF
+        oracleAdapter.resolve(questionId, priceAtStart);
 
-        // Fetch final BTC/USD price
-        (, int256 priceAtEnd, , , ) = IChainlinkAggregatorMinimal(oracleFeed).latestRoundData();
-
-        // Determine outcome: UP if price increased, DOWN otherwise
-        outcome = priceAtEnd > priceAtStart
-            ? IMarketRegistry.Outcome.UP
-            : IMarketRegistry.Outcome.DOWN;
-
-        finalStateRoot = stateRoot;
         resolved = true;
 
-        emit MarketResolved(marketId, outcome);
+        // Determine outcome for event
+        int256 priceAtEnd = oracleAdapter.getPrice();
+        bool isUp = priceAtEnd > priceAtStart;
+
+        emit MarketResolved(marketId, isUp);
     }
 
+    // ============ Redemption ============
+
     /**
-     * @notice Claims payout for the calling agent.
-     * @dev Payout is based on positions held for the winning outcome.
+     * @notice Redeems winning positions for collateral.
+     * @dev Caller must hold winning position tokens.
      */
-    function claim() external override {
-        if (!resolved) revert NotResolved();
-        if (claimed[msg.sender]) revert AlreadyClaimed();
+    function redeem() external {
+        if (!resolved) revert AlreadyResolved();
 
-        // Get agent's positions from the final state
-        (uint256 upPosition, uint256 downPosition) = verifier.getAgentPosition(
-            finalStateRoot,
-            msg.sender,
-            marketId
+        // Build index sets for redemption (both UP and DOWN)
+        uint256[] memory indexSets = new uint256[](2);
+        indexSets[0] = UP_INDEX_SET;
+        indexSets[1] = DOWN_INDEX_SET;
+
+        // CTF will burn tokens and transfer collateral to caller
+        ctf.redeemPositions(
+            collateralToken,
+            bytes32(0),
+            conditionId,
+            indexSets
         );
-
-        // Calculate payout based on winning outcome
-        uint256 payout;
-        if (outcome == IMarketRegistry.Outcome.UP) {
-            payout = upPosition; // 1:1 payout for winning position
-        } else {
-            payout = downPosition;
-        }
-
-        if (payout == 0) revert NoPayout();
-
-        claimed[msg.sender] = true;
-
-        // Transfer payout (handled by escrow in full implementation)
-        // For MVP, emit event for off-chain settlement
-        emit PayoutClaimed(marketId, msg.sender, payout);
     }
 
     // ============ View Functions ============
@@ -216,25 +302,48 @@ contract BinaryMarket is IBinaryMarket {
     /**
      * @notice Returns the current market state.
      */
-    function state() external view returns (IMarketRegistry.MarketState) {
-        if (resolved) return IMarketRegistry.MarketState.RESOLVED;
-        if (started) return IMarketRegistry.MarketState.ACTIVE;
-        return IMarketRegistry.MarketState.PENDING;
+    function state() external view returns (MarketState) {
+        if (resolved) return MarketState.RESOLVED;
+        if (started) return MarketState.ACTIVE;
+        if (initialized) return MarketState.PENDING;
+        return MarketState.UNINITIALIZED;
+    }
+
+    /**
+     * @notice Returns the UP position ID.
+     */
+    function upPositionId() external view returns (uint256) {
+        bytes32 collectionId = ctf.getCollectionId(bytes32(0), conditionId, UP_INDEX_SET);
+        return ctf.getPositionId(collateralToken, collectionId);
+    }
+
+    /**
+     * @notice Returns the DOWN position ID.
+     */
+    function downPositionId() external view returns (uint256) {
+        bytes32 collectionId = ctf.getCollectionId(bytes32(0), conditionId, DOWN_INDEX_SET);
+        return ctf.getPositionId(collateralToken, collectionId);
+    }
+
+    // ============ Types ============
+
+    enum MarketState {
+        UNINITIALIZED,
+        PENDING,
+        ACTIVE,
+        RESOLVED
     }
 }
 
 /**
- * @dev Minimal Chainlink interface to avoid import issues.
+ * @dev Minimal ERC-1155 interface for token transfers.
  */
-interface IChainlinkAggregatorMinimal {
-    function latestRoundData()
-        external
-        view
-        returns (
-            uint80 roundId,
-            int256 answer,
-            uint256 startedAt,
-            uint256 updatedAt,
-            uint80 answeredInRound
-        );
+interface IERC1155 {
+    function safeTransferFrom(
+        address from,
+        address to,
+        uint256 id,
+        uint256 amount,
+        bytes calldata data
+    ) external;
 }

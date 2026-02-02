@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {IMarketRegistry} from "./interfaces/IMarketRegistry.sol";
 import {BinaryMarket} from "./BinaryMarket.sol";
 
 /**
@@ -9,23 +8,37 @@ import {BinaryMarket} from "./BinaryMarket.sol";
  * @notice Factory and registry for PolyBook binary prediction markets.
  * @dev Creates BinaryMarket instances and enforces slug uniqueness.
  */
-contract MarketRegistry is IMarketRegistry {
+contract MarketRegistry {
     // ============ State Variables ============
 
     /// @notice Auto-incrementing market ID counter
     uint256 private _nextMarketId = 1;
 
-    /// @notice Chainlink BTC/USD price feed address
-    address public immutable oracleFeed;
+    /// @notice Gnosis Conditional Tokens contract
+    address public immutable ctf;
 
-    /// @notice Yellow state verifier contract
-    address public immutable verifier;
+    /// @notice Oracle adapter for all markets
+    address public immutable oracleAdapter;
+
+    /// @notice Collateral token (ytest.usd)
+    address public immutable collateralToken;
 
     /// @notice Mapping from market ID to contract address
     mapping(uint256 => address) private _markets;
 
     /// @notice Mapping from slug to market ID (0 if unused)
     mapping(bytes32 => uint256) private _slugToMarketId;
+
+    // ============ Events ============
+
+    /// @notice Emitted when a new market is created
+    event MarketCreated(
+        uint256 indexed marketId,
+        address indexed marketContract,
+        string slug,
+        uint256 startTimestamp,
+        uint256 expiryTimestamp
+    );
 
     // ============ Errors ============
 
@@ -36,13 +49,15 @@ contract MarketRegistry is IMarketRegistry {
     // ============ Constructor ============
 
     /**
-     * @notice Initializes the registry with oracle and verifier addresses.
-     * @param _oracleFeed Chainlink BTC/USD feed address
-     * @param _verifier Yellow state verifier address
+     * @notice Initializes the registry with CTF and oracle addresses.
+     * @param _ctf Gnosis Conditional Tokens contract
+     * @param _oracleAdapter Oracle adapter for resolution
+     * @param _collateralToken Collateral token (ytest.usd)
      */
-    constructor(address _oracleFeed, address _verifier) {
-        oracleFeed = _oracleFeed;
-        verifier = _verifier;
+    constructor(address _ctf, address _oracleAdapter, address _collateralToken) {
+        ctf = _ctf;
+        oracleAdapter = _oracleAdapter;
+        collateralToken = _collateralToken;
     }
 
     // ============ External Functions ============
@@ -58,7 +73,7 @@ contract MarketRegistry is IMarketRegistry {
         string calldata slug,
         uint256 startTimestamp,
         uint256 expiryTimestamp
-    ) external override returns (uint256 marketId) {
+    ) external returns (uint256 marketId) {
         // Validate timestamps
         if (startTimestamp <= block.timestamp) revert InvalidTimestamps();
         if (expiryTimestamp <= startTimestamp) revert InvalidTimestamps();
@@ -76,8 +91,9 @@ contract MarketRegistry is IMarketRegistry {
             slug,
             startTimestamp,
             expiryTimestamp,
-            oracleFeed,
-            verifier
+            ctf,
+            oracleAdapter,
+            collateralToken
         );
 
         // Store mappings
@@ -100,7 +116,7 @@ contract MarketRegistry is IMarketRegistry {
      * @param marketId The market ID
      * @return The BinaryMarket contract address
      */
-    function getMarket(uint256 marketId) external view override returns (address) {
+    function getMarket(uint256 marketId) external view returns (address) {
         address market = _markets[marketId];
         if (market == address(0)) revert MarketNotFound();
         return market;
@@ -111,7 +127,7 @@ contract MarketRegistry is IMarketRegistry {
      * @param slug The market slug
      * @return The market ID (reverts if not found)
      */
-    function getMarketBySlug(string calldata slug) external view override returns (uint256) {
+    function getMarketBySlug(string calldata slug) external view returns (uint256) {
         bytes32 slugHash = keccak256(abi.encodePacked(slug));
         uint256 marketId = _slugToMarketId[slugHash];
         if (marketId == 0) revert MarketNotFound();
@@ -122,7 +138,7 @@ contract MarketRegistry is IMarketRegistry {
      * @notice Returns the total number of markets created.
      * @return The market count
      */
-    function marketCount() external view override returns (uint256) {
+    function marketCount() external view returns (uint256) {
         return _nextMarketId - 1;
     }
 }
