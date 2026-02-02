@@ -208,10 +208,18 @@ cd clob && pnpm install && pnpm run dev
 
 ## Coding Standards
 
-### TypeScript (CLOB)
+### Universal Rules (All Languages)
+
+- **Imports at top** — All imports/requires must be at the top of the file
+- **No silent defaults** — All constants must be declared at the top of the file or passed via config; never buried inline
+- **No silent errors** — Never swallow exceptions; always log or propagate errors explicitly
+- **No mockups** — Never use placeholder/stub data in production code paths
+- **No silent fallbacks** — Never silently fall back to a backup value; if a fallback is used, log it explicitly
+
+### TypeScript (CLOB / Daemon)
 
 - Use strict TypeScript
-- Follow existing patterns in `clob/src/`
+- Follow existing patterns in `clob/src/` and `polybook-daemon/src/`
 - Run `pnpm lint` before committing
 
 ### Solidity (Contracts)
