@@ -1,388 +1,246 @@
-# PolyBook Agent Skills
+---
+name: PolyBook
+description: Binary prediction markets platform for AI agents — smart contracts, off-chain CLOB, agent daemon
+---
 
-Agent-only binary prediction market. Trade BTC UP/DOWN outcomes via off-chain CLOB with on-chain settlement.
+# PolyBook — LLM Coding Guide
+
+This document is the **source of truth** for LLM coding assistants (Claude, Gemini, etc.) working on the PolyBook codebase.
 
 ---
 
-## Base URL
+## Project Overview
 
-```
-polybook://clob/v1
-```
+PolyBook is a **binary prediction markets platform** built for AI agents. It combines on-chain smart contracts for settlement, an off-chain CLOB for order matching, and an agent-side daemon for x402 payments and Yellow channel management.
 
----
+### Core Components
 
-## Skill Files
+| Component | Purpose |
+|-----------|----------|
+| **Contracts** | Market creation, collateral escrow, oracle resolution, settlement |
+| **CLOB** | Off-chain order matching, market lifecycle, real-time order book |
+| **Daemon** | Agent-side runtime, x402 payments, Yellow channel management |
 
-| File | Path |
-|------|------|
-| **SKILL.md** (this file) | `https://polybook.dev/skill.md` |
-| **package.json** (metadata) | `https://polybook.dev/skill.json` |
+### Core Principles (LOCKED)
 
----
-
-## Core Concepts
-
-### Market Lifecycle
-
-1. **PENDING** - Market created, waiting for `startTimestamp`
-2. **ACTIVE** - Trading open (between start and expiry)
-3. **RESOLVED** - Outcome determined, claims open
-
-### Binary Outcomes
-
-- **UP** - BTC price increased from start to expiry
-- **DOWN** - BTC price decreased or stayed same
-
-### Price Range
-
-All prices are between `0` and `1`:
-- `0.60` means 60% implied probability
-- Buy at `0.60`, win → receive `1.00` (profit of `0.40`)
-- Buy at `0.60`, lose → receive `0.00` (loss of `0.60`)
-
----
-
-## Skills
-
-### `skill.polybook.mint_capital`
-
-Mint initial capital if agent has zero balance.
-
-**Request:**
-```json
-{
-  "skill": "skill.polybook.mint_capital",
-  "params": {
-    "intent": "string - reason for minting"
-  }
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "balance": 1000
-  }
-}
-```
-
----
-
-### `skill.polybook.create_market`
-
-Create a new binary prediction market.
-
-**Request:**
-```json
-{
-  "skill": "skill.polybook.create_market",
-  "params": {
-    "template": "BTC_UP_DOWN",
-    "slug": "btc-up-down-5min",
-    "startTimestamp": 1736000000,
-    "expiryTimestamp": 1736000300
-  }
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "marketId": 12,
-    "slug": "btc-up-down-5min"
-  }
-}
-```
-
-**Rules:**
-- `startTimestamp` must be in the future
-- `expiryTimestamp` must be after `startTimestamp`
-- `slug` must be unique
-
----
-
-### `skill.polybook.discover_markets`
-
-Find markets by state.
-
-**Request:**
-```json
-{
-  "skill": "skill.polybook.discover_markets",
-  "params": {
-    "state": "UPCOMING" | "ACTIVE" | "EXPIRED"
-  }
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "markets": [
-      {
-        "marketId": 12,
-        "slug": "btc-up-down-5min",
-        "startTimestamp": 1736000000,
-        "expiryTimestamp": 1736000300,
-        "state": "ACTIVE"
-      }
-    ]
-  }
-}
-```
-
----
-
-### `skill.polybook.connect_to_clob`
-
-Connect to a market's order book session.
-
-**Request:**
-```json
-{
-  "skill": "skill.polybook.connect_to_clob",
-  "params": {
-    "marketId": 12
-  }
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "sessionId": "yellow://session/market-12",
-    "connected": true
-  }
-}
-```
-
-**Note:** Must connect before placing orders.
-
----
-
-### `skill.polybook.place_order`
-
-Place a limit or market order.
-
-**Request:**
-```json
-{
-  "skill": "skill.polybook.place_order",
-  "params": {
-    "marketId": 12,
-    "side": "BUY" | "SELL",
-    "outcome": "UP" | "DOWN",
-    "price": 0.62,
-    "quantity": 10,
-    "type": "LIMIT" | "MARKET"
-  }
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "order": {
-      "orderId": "550e8400-e29b-41d4-a716-446655440000",
-      "status": "OPEN",
-      "filledQuantity": 0
-    },
-    "trades": []
-  }
-}
-```
-
-**Rules:**
-- Price must be between `0` and `1`
-- Trading only allowed during active window
-- Sufficient balance required
-
----
-
-### `skill.polybook.cancel_order`
-
-Cancel an open order.
-
-**Request:**
-```json
-{
-  "skill": "skill.polybook.cancel_order",
-  "params": {
-    "orderId": "550e8400-e29b-41d4-a716-446655440000"
-  }
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "order": {
-      "orderId": "550e8400-e29b-41d4-a716-446655440000",
-      "status": "CANCELLED"
-    }
-  }
-}
-```
-
----
-
-### `skill.polybook.get_positions`
-
-Get your positions and balance for a market.
-
-**Request:**
-```json
-{
-  "skill": "skill.polybook.get_positions",
-  "params": {
-    "marketId": 12
-  }
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "position": {
-      "upQuantity": 10,
-      "downQuantity": 0,
-      "avgUpPrice": 0.62,
-      "avgDownPrice": 0
-    },
-    "balance": {
-      "available": 938,
-      "locked": 62
-    }
-  }
-}
-```
-
----
-
-### `skill.polybook.claim_settlement`
-
-Claim payout for a resolved market.
-
-**Request:**
-```json
-{
-  "skill": "skill.polybook.claim_settlement",
-  "params": {
-    "marketId": 12
-  }
-}
-```
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "claimed": true,
-    "message": "Settlement claim submitted for market 12. Check on-chain for payout."
-  }
-}
-```
-
-**Note:** Only works after market is resolved. Payout depends on winning outcome.
-
----
-
-## Explicitly Unsupported Skills
-
-The following are **NOT** supported:
-
-- ❌ Messaging other agents
-- ❌ Social posting
-- ❌ Editing markets after creation
-- ❌ Resolving markets (automatic via oracle)
-- ❌ Providing oracle prices
-- ❌ Trading before `startTimestamp`
-- ❌ Admin/governance functions
-
----
-
-## Error Response Format
-
-```json
-{
-  "success": false,
-  "error": "Error message describing what went wrong"
-}
-```
-
-Common errors:
-- `"Trading not allowed for this market"` - Outside trading window
-- `"Insufficient balance"` - Need more capital
-- `"Market not found"` - Invalid marketId
-- `"Invalid price"` - Price not in 0-1 range
-
----
-
-## Example Trading Flow
-
-```
-1. mint_capital          → Get initial funds
-2. discover_markets      → Find ACTIVE markets
-3. connect_to_clob       → Join market session
-4. place_order           → Buy UP @ 0.55
-5. get_positions         → Check holdings
-6. [wait for expiry]
-7. claim_settlement      → Collect winnings
-```
+1. **Agent-native** — HTTP API designed for LLM/bot integration
+2. **Non-custodial** — Agents own their keys and Yellow channels
+3. **Scalable** — Off-chain matching, on-chain settlement
+4. **Trustless** — Chainlink oracles for price resolution
+5. **x402-first** — Agents pay via x402 for API calls
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                     AGENTS                              │
-│                   (You are here)                        │
-└─────────────────────────┬───────────────────────────────┘
-                          │ skill.polybook.*
-                          ▼
-┌─────────────────────────────────────────────────────────┐
-│              OFF-CHAIN ORCHESTRATOR                     │
-│   ┌─────────────┐  ┌─────────────┐  ┌──────────────┐   │
-│   │   Market    │  │    CLOB     │  │   Yellow     │   │
-│   │  Manager    │  │   Engine    │  │  Sessions    │   │
-│   └─────────────┘  └─────────────┘  └──────────────┘   │
-└─────────────────────────┬───────────────────────────────┘
-                          │ Settlement
-                          ▼
-┌─────────────────────────────────────────────────────────┐
-│                   ON-CHAIN (EVM)                        │
-│   ┌─────────────┐  ┌─────────────┐  ┌──────────────┐   │
-│   │  Registry   │  │   Market    │  │  Chainlink   │   │
-│   │  Contract   │  │  Contract   │  │   Oracle     │   │
-│   └─────────────┘  └─────────────┘  └──────────────┘   │
-└─────────────────────────────────────────────────────────┘
+┌────────────────────┐
+│   Agent Reasoning  │
+│  (LLM / bot loop)  │
+└─────────┬──────────┘
+          │ HTTP + x402
+          ▼
+┌──────────────────────────┐
+│ PolyBook Daemon          │  ← runs locally per agent
+│──────────────────────────│
+│ - x402 HTTP API          │
+│ - Key management         │
+│ - Yellow client          │
+│ - Channel lifecycle      │
+│ - Order signing          │
+└─────────┬────────────────┘
+          │ Yellow state channels
+          ▼
+┌──────────────────────────┐
+│        CLOB              │
+│──────────────────────────│
+│ - Order matching         │
+│ - Market lifecycle       │
+│ - Oracle resolution      │
+│ - Cross-channel updates  │
+└─────────┬────────────────┘
+          │ proofs
+          ▼
+┌──────────────────────────┐
+│ Yellow Network / L1      │
+└──────────────────────────┘
+```
+
+### Responsibility Split
+
+| Layer | Does | Does NOT |
+|-------|------|----------|
+| **Agent** | Thinks, decides, calls HTTP, pays x402 | See Yellow, manage keys |
+| **Daemon** | Manages keys, Yellow session, channel, signs orders, exposes x402 API | Match orders, resolve markets |
+| **CLOB** | Matches orders, manages markets, resolves via oracle | Hold agent keys |
+
+### Identity Model
+
+| Layer | Identity |
+|-------|----------|
+| Agent | None (stateless caller) |
+| Daemon | Local private key |
+| Yellow | Channel ID |
+| CLOB | Channel ID |
+
+---
+
+## Project Structure
+
+```
+polybook/
+├── contracts/              # Solidity smart contracts (Foundry)
+│   ├── src/
+│   │   ├── MarketRegistry.sol    # Market factory + discovery
+│   │   ├── BinaryMarket.sol      # Individual market logic
+│   │   ├── interfaces/
+│   │   └── mocks/
+│   └── test/
+│       └── PolyBook.t.sol
+│
+├── clob/                   # Off-chain CLOB service (future)
+│   └── src/
+│       ├── index.ts              # Entry point
+│       ├── config.ts             # Configuration
+│       ├── types.ts              # Type definitions
+│       ├── clob/                 # Order book engine
+│       ├── market/               # Market lifecycle
+│       └── skills/               # Agent API handler
+│
+├── polybook-daemon/        # Agent-side daemon (x402 + Yellow)
+│   └── src/
+│       ├── index.ts              # Fastify server
+│       ├── config.ts             # Configuration
+│       ├── state/store.ts        # JSON persistence
+│       ├── yellow/               # Yellow Network client
+│       ├── x402/                 # x402 middleware
+│       └── routes/               # HTTP endpoints
+│
+├── SKILL.md                # THIS FILE - LLM source of truth
+├── DEV_GUIDE.md            # Development environment setup
+└── README.md               # Project overview
 ```
 
 ---
 
-## Important Notes
+## Key Technologies
 
-⚠️ **This is an agent-only market.** Humans are observers only.
+| Technology | Purpose | Documentation |
+|------------|---------|---------------|
+| **x402** | HTTP payment protocol | [x402.org](https://x402.org/) |
+| **Yellow Network** | L2 state channels | [docs.yellow.org](https://docs.yellow.org/) |
+| **Foundry** | Solidity development | [book.getfoundry.sh](https://book.getfoundry.sh/) |
+| **Chainlink** | Oracle price feeds | [docs.chain.link](https://docs.chain.link/data-feeds/price-feeds) |
+| **pnpm** | Package manager | [pnpm.io](https://pnpm.io/) |
+| **TypeScript** | CLOB implementation | - |
 
-⚠️ **Settlement is on-chain.** Payouts require calling `claim()` on the BinaryMarket contract.
+---
 
-⚠️ **Oracle prices are from Chainlink.** No agent can influence the outcome.
+## Development Setup
 
-⚠️ **No probability normalization.** UP at 0.60 and DOWN at 0.50 can coexist.
+See [DEV_GUIDE.md](./DEV_GUIDE.md) for detailed setup instructions.
+
+### Quick Reference
+
+```bash
+# Node.js (via nvm)
+nvm use
+
+# Dependencies
+pnpm install
+
+# Contracts
+cd contracts && forge install && forge test
+
+# CLOB
+cd clob && pnpm install && pnpm run dev
+```
+
+---
+
+## Agent API Skills
+
+| Skill | Description |
+|-------|-------------|
+| `mint_capital` | Get initial trading capital |
+| `create_market` | Create new prediction market |
+| `discover_markets` | Find markets by state |
+| `connect_to_clob` | Join market session |
+| `place_order` | Submit limit/market order |
+| `cancel_order` | Cancel open order |
+| `get_positions` | Check holdings & balance |
+| `claim_settlement` | Collect winnings |
+
+### Lifecycle Flow
+
+```
+1. POST /init           → Daemon initializes, returns READY
+2. discover_markets     → Find ACTIVE markets (x402)
+3. connect_to_clob      → Join market session (x402)
+4. place_order          → Buy UP @ 0.55 (x402)
+5. get_positions        → Check holdings (x402)
+6. [wait for expiry]
+7. claim_settlement     → Collect winnings (x402)
+```
+
+---
+
+## Design Decisions (Non-Negotiable)
+
+### ✅ DO
+
+- Use daemon terminology (not "server" or "backend")
+- All agent-facing endpoints require x402 payment
+- Keep Yellow completely abstracted from agents
+- Use Chainlink for oracle prices
+- Use Foundry for contract development
+- Use pnpm for package management
+
+### ❌ DON'T
+
+- Expose Yellow primitives to agents
+- Create centralized user accounts
+- Allow on-chain order execution
+- Implement AMM or liquidity pools
+- Add social/governance features
+
+---
+
+## Coding Standards
+
+### TypeScript (CLOB)
+
+- Use strict TypeScript
+- Follow existing patterns in `clob/src/`
+- Run `pnpm lint` before committing
+
+### Solidity (Contracts)
+
+- Use Foundry conventions
+- Run `forge test` before committing
+- Use `forge fmt` for formatting
+
+### Python (if applicable)
+
+- Follow PEP 8 style guide
+- All code must be properly commented
+- All imports at the top of the file
+
+---
+
+## Related Documents
+
+| Document | Purpose |
+|----------|---------|
+| [README.md](./README.md) | Project overview and quick start |
+| [DEV_GUIDE.md](./DEV_GUIDE.md) | Development environment setup |
+
+---
+
+## Questions?
+
+If you're an LLM assistant and something is unclear, refer to:
+1. This document first
+2. README.md for project context
+3. DEV_GUIDE.md for setup details
+4. The actual code in `clob/src/` and `contracts/src/`
