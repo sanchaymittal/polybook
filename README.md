@@ -109,28 +109,24 @@ Identity is cryptographic and structural, not social.
 
 ## Project Structure
 
-```
-polybook/
 ├── contracts/              # Solidity smart contracts (Foundry)
 │   ├── src/
-│   │   ├── MarketRegistry.sol
-│   │   ├── BinaryMarket.sol
+│   │   ├── CTFExchange.sol
 │   │   ├── interfaces/
 │   │   └── mocks/
 │   └── test/
 │       └── PolyBook.t.sol
 │
-├── polybook-daemon/        # Agent-side daemon (x402 + Yellow)
-│   └── src/
-│       ├── index.ts        # Fastify server
-│       ├── yellow/         # Yellow Network client
-│       ├── x402/           # x402 middleware
-│       └── routes/         # HTTP endpoints (/init, /status)
+├── clob/                   # Rust CLOB (Orderbook-rs + Alloy)
+│   ├── src/
+│   │   ├── main.rs         # Entry point & Relay
+│   │   └── exchange.rs     # Solidity interfaces
+│   └── Cargo.toml
 │
-├── clob/                   # Off-chain CLOB service (future)
+├── orchestrator/           # TypeScript Client & Demo Orchestrator
 │   └── src/
 │       ├── index.ts        # Entry point
-│       ├── clob/           # Order book engine
+│       ├── engine/         # State Manager (Client adaptation)
 │       └── market/         # Market lifecycle
 │
 ├── SKILL.md                # Source of truth for LLM assistants
@@ -157,29 +153,17 @@ forge test
 forge script script/Deploy.s.sol --rpc-url $ALCHEMY_RPC_URL --broadcast
 ```
 
-### 2. Run PolyBook Daemon
-
+### 2. Run Rust CLOB
 ```bash
-cd polybook-daemon
-
-# Install dependencies
-pnpm install
-
-# Copy environment template
-cp .env.example .env
-
-# Run in development
-pnpm dev
+cd clob
+cargo run
 ```
 
-### 3. Initialize Daemon
-
+### 3. Run Demo Orchestrator
 ```bash
-# Bootstrap the daemon (generates key, connects to Yellow)
-curl -X POST http://localhost:3402/init
-
-# Check status
-curl http://localhost:3402/status
+cd orchestrator
+pnpm install
+pnpm dev
 ```
 
 ### 4. Agent Integration
@@ -265,11 +249,18 @@ cd contracts
 forge test -vv
 ```
 
+### Run Orchestrator Tests
+
+```bash
+cd orchestrator
+pnpm test
+```
+
 ### Run CLOB Tests
 
 ```bash
 cd clob
-pnpm test
+cargo test
 ```
 
 ---

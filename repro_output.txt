@@ -1,0 +1,19 @@
+--- Debugging Relay Taker Order ---
+Order Hash: 0xa45f339d45bc169d33768a993815a5dfdadcdf4a9c3645957967306b58a99910
+validateOrderSignature SUCCESS
+Empty Match Simulation FAILED
+The contract function "matchOrders" reverted with the following signature:
+0x756688fe
+
+Unable to decode signature "0x756688fe" as it was not found on the provided ABI.
+Make sure you are using the correct ABI and that the error exists on it.
+You can look up the decoded signature here: https://4byte.sourcify.dev/?q=0x756688fe.
+ 
+Contract Call:
+  address:   0xa513E6E4b8f2a923D98304ec87F64353C4D5C853
+  function:  matchOrders((uint256 salt, address maker, address signer, address taker, uint256 tokenId, uint256 makerAmount, uint256 takerAmount, uint256 expiration, uint256 nonce, uint256 feeRateBps, uint8 side, uint8 signatureType, bytes signature), (uint256 salt, address maker, address signer, address taker, uint256 tokenId, uint256 makerAmount, uint256 takerAmount, uint256 expiration, uint256 nonce, uint256 feeRateBps, uint8 side, uint8 signatureType, bytes signature)[], uint256 takerFillAmount, uint256[] makerFillAmounts)
+  args:                 ({"salt":"63910567559549187693294567991609377574447371183730691742839702913193008145975","maker":"0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC","signer":"0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC","taker":"0x0000000000000000000000000000000000000000","tokenId":"41069470821908003820423618366673725376269941223722400569053573765861956451072","makerAmount":"3000000","takerAmount":"5000000","expiration":"1770222389","nonce":"1","feeRateBps":"0","side":0,"signatureType":0,"signature":"0xcb013587d84fb76de4fbd9df7d92821789c3f44215cba96db8d9f4d458d0d7ff7217e8cf87582559e6fc170d482a1f61a6ef94596ece9ab100d76618636a6eb31c"}, [], 0, [])
+  sender:    0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+
+Docs: https://viem.sh/docs/contract/decodeErrorResult
+Version: viem@2.45.1
