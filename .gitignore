@@ -28,3 +28,4 @@ typechain-types/
 
 # Yellow State Export
 *.state.json
+*/target
