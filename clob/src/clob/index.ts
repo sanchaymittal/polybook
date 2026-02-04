@@ -3,5 +3,5 @@
  *
  * Re-exports CLOB components
  */
-export { OrderBook } from './book.js';
+// export { OrderBook } from './book.js'; // Removed
 export { CLOBEngine } from './engine.js';
