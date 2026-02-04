@@ -4,6 +4,8 @@
  * Core types for markets, orders, and CLOB operations.
  */
 
+import type { Address, Hex } from 'viem';
+
 /**
  * Market lifecycle states
  */
@@ -26,8 +28,18 @@ export enum Outcome {
  * Order side (agent perspective)
  */
 export enum Side {
-    BUY = 'BUY',
-    SELL = 'SELL',
+    BUY = 0,
+    SELL = 1,
+}
+
+/**
+ * Signature type enum matching Solidity
+ */
+export enum SignatureType {
+    EOA = 0,
+    POLY_PROXY = 1,
+    POLY_GNOSIS_SAFE = 2,
+    POLY_1271 = 3,
 }
 
 /**
@@ -63,20 +75,29 @@ export interface Market {
 }
 
 /**
- * Order in the CLOB
+ * Order struct matching Polymarket CTF Exchange
  */
 export interface Order {
-    orderId: string;
-    marketId: number;
-    agent: string;
+    salt: bigint;
+    maker: Address;
+    signer: Address;
+    taker: Address;
+    tokenId: bigint;
+    makerAmount: bigint;
+    takerAmount: bigint;
+    expiration: bigint;
+    nonce: bigint;
+    feeRateBps: bigint;
     side: Side;
-    outcome: Outcome;
-    price: number;        // 0 to 1
-    quantity: number;     // Units
+    signatureType: SignatureType;
+    signature: Hex;
+    // Augmented fields for CLOB tracking
     filledQuantity: number;
-    status: OrderStatus;
-    createdAt: number;
-    updatedAt: number;
+    price: number;
+    quantity: number;
+    outcome: Outcome;
+    marketId: number;
+    orderHash?: string; // Hex string of the order hash
 }
 
 /**
@@ -88,11 +109,15 @@ export interface Trade {
     outcome: Outcome;
     price: number;
     quantity: number;
-    buyOrderId: string;
-    sellOrderId: string;
+    // Polymarket / Rust Engine fields
+    takerOrderHash: string;
+    makerOrderHash: string;
     buyer: string;
     seller: string;
     timestamp: number;
+    // Optional references for convenience
+    takerOrder?: Order;
+    makerOrders?: Order[];
 }
 
 /**

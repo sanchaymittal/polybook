@@ -6,7 +6,7 @@
 import { getConfig } from './config.js';
 import { MarketManager } from './market/index.js';
 import { SkillsHandler } from './skills/index.js';
-import { MarketState, Outcome } from './types.js';
+import { MarketState, Outcome, Side, OrderType } from './types.js';
 
 /**
  * PolyBook CLOB Service
@@ -62,13 +62,17 @@ class PolyBookCLOB {
             params: {
                 template: 'BTC_UP_DOWN',
                 slug: 'btc-5min-demo',
-                startTimestamp: now + 1000, // 1 second from now
-                expiryTimestamp: now + 60000, // 1 minute from now
+                startTimestamp: now + 2000,
+                expiryTimestamp: now + 60000,
             },
             agentAddress: '0xAgent1',
             timestamp: now,
         });
         console.log('Create result:', createResult);
+
+        // Wait for market to be ready
+        console.log('Waiting for market start time...');
+        await new Promise((resolve) => setTimeout(resolve, 2500));
 
         // 2. Mint capital for agents
         console.log('\n2. Minting capital for agents...');
@@ -121,11 +125,11 @@ class PolyBookCLOB {
             skill: 'skill.polybook.place_order',
             params: {
                 marketId: 1,
-                side: 'BUY',
-                outcome: 'UP',
+                side: Side.BUY,
+                outcome: Outcome.UP,
                 price: 0.60,
                 quantity: 10,
-                type: 'LIMIT',
+                type: OrderType.LIMIT,
             },
             agentAddress: agent1,
             timestamp: now,
@@ -137,11 +141,11 @@ class PolyBookCLOB {
             skill: 'skill.polybook.place_order',
             params: {
                 marketId: 1,
-                side: 'SELL',
-                outcome: 'UP',
+                side: Side.SELL,
+                outcome: Outcome.UP,
                 price: 0.60,
                 quantity: 5,
-                type: 'LIMIT',
+                type: OrderType.LIMIT,
             },
             agentAddress: agent2,
             timestamp: now,
@@ -170,7 +174,7 @@ class PolyBookCLOB {
         console.log('\n7. Order book snapshot...');
         const clob = this.marketManager.getCLOB(1);
         if (clob) {
-            const books = clob.getOrderBooks();
+            const books = await clob.getOrderBooks();
             console.log('UP book:', books.up);
             console.log('DOWN book:', books.down);
         }

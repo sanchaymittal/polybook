@@ -69,13 +69,13 @@ export class SkillsHandler {
                     ) as SkillResponse<R>;
 
                 case 'place_order':
-                    return this.placeOrder(
+                    return await this.placeOrder(
                         request.agentAddress,
                         request.params as PlaceOrderParams
                     ) as SkillResponse<R>;
 
                 case 'cancel_order':
-                    return this.cancelOrder(
+                    return await this.cancelOrder(
                         request.agentAddress,
                         request.params as CancelOrderParams
                     ) as SkillResponse<R>;
@@ -249,10 +249,10 @@ export class SkillsHandler {
      * skill.polybook.place_order
      * Places an order in the CLOB
      */
-    private placeOrder(
+    private async placeOrder(
         agent: string,
         params: PlaceOrderParams
-    ): SkillResponse<{ order: Order; trades: Trade[] }> {
+    ): Promise<SkillResponse<{ order: Order; trades: Trade[] }>> {
         // Check trading window
         if (!this.marketManager.isTradingAllowed(params.marketId)) {
             return {
@@ -293,7 +293,7 @@ export class SkillsHandler {
             };
         }
 
-        const result = clob.placeOrder(
+        const result = await clob.placeOrder(
             agent,
             params.side,
             params.outcome,
@@ -312,16 +312,16 @@ export class SkillsHandler {
      * skill.polybook.cancel_order
      * Cancels an open order
      */
-    private cancelOrder(
+    private async cancelOrder(
         agent: string,
         params: CancelOrderParams
-    ): SkillResponse<{ order: Order | null }> {
+    ): Promise<SkillResponse<{ order: Order | null }>> {
         // Try all markets
         for (const market of this.marketManager.getAllMarkets()) {
             const clob = this.marketManager.getCLOB(market.marketId);
             if (clob) {
                 try {
-                    const order = clob.cancelOrder(params.orderId, agent);
+                    const order = await clob.cancelOrder(params.orderId, agent);
                     if (order) {
                         return {
                             success: true,
