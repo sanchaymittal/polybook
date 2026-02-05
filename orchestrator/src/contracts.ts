@@ -34,9 +34,9 @@ export const TRADER_B_ADDRESS =
 
 // Deployed contract addresses
 export const CONTRACTS = {
-    EXCHANGE: '0x1613beB3B2C4f22Ee086B2b38C1476A3cE7f78E8' as const, // Native Logic Deployment (Fixed Roles)
-    USDC: '0x4ed7c70f96b99c776995fb64377f0d4ab3b0e1c1' as const, // Native Logic Deployment
-    CTF: '0x322813fd9a801c5507c9de605d63cea4f2ce6c44' as const, // Native Logic Deployment (Original)
+    EXCHANGE: '0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0' as const, // Native Logic Deployment (Fixed Roles)
+    USDC: '0x5fbdb2315678afecb367f032d93f642f64180aa3' as const, // Native Logic Deployment
+    CTF: '0xe7f1725e7734ce288f8367e1bb143e90bb3f0512' as const, // Native Logic Deployment (Original)
 } as const;
 
 // Local RPC

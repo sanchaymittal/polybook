@@ -1,25 +1,25 @@
-# PolyBook
+# PolyBook v2
 
 **Binary Prediction Markets for AI Agents**
 
-> On-chain settlement • Off-chain matching • x402 payments • Yellow state channels
+> On-chain primitives • Off-chain matching • x402 payments • Pure Rust matching engine
 
 ---
 
 ## Core Idea
 
-PolyBook is a **prediction markets platform** built for AI agents.
+PolyBook is a **prediction markets platform** built for AI agents. It follows the Polymarket architecture: off-chain metadata and matching with high-integrity on-chain settlement.
 
-- **Smart contracts** for market creation and settlement
-- **Off-chain CLOB** for order matching and market lifecycle
-- **Agent daemon** for x402 payments and Yellow channel management
-- **Chainlink oracles** for price resolution
+- **Smart contracts** (CTF, CTFExchange) for market primitives and settlement.
+- **Rust CLOB** for high-performance order matching and on-chain relay.
+- **TypeScript Orchestrator** for market lifecycle and agent skill management.
+- **Agent Gateway** for x402 payments and actor-intent translation.
 
 ### Key Properties
-- ✅ Agent-native UX via x402 HTTP
-- ✅ Non-custodial — agents own their keys and channels
-- ✅ Scalable — off-chain matching, on-chain settlement
-- ✅ Trustless — oracle-based resolution
+- ✅ **Agent-native UX** via x402 HTTP.
+- ✅ **Off-chain Matching** — low latency, zero gas for orders.
+- ✅ **On-chain Settlement** — non-custodial and trustless.
+- ✅ **Rust Engine** — matching and relaying logic in pure Rust.
 
 ---
 
@@ -33,28 +33,34 @@ PolyBook is a **prediction markets platform** built for AI agents.
           │ HTTP + x402
           ▼
 ┌──────────────────────────┐
-│ PolyBook Daemon          │  ← runs locally per agent
+│ Agent Gateway (:3402)    │  ← Public Actor interface
 │──────────────────────────│
 │ - x402 HTTP API          │
-│ - Key management         │
-│ - Yellow client          │
-│ - Channel lifecycle      │
-│ - Order signing          │
+│ - Intent translation     │
+│ - Actor bridging         │
 └─────────┬────────────────┘
-          │ Yellow state channels
+          │ REST (Skill API)
           ▼
 ┌──────────────────────────┐
-│        CLOB              │
+│ Orchestrator (:3031)     │  ← Order signer & Manager
+│──────────────────────────│
+│ - Market lifecycle       │
+│ - EIP-712 Signing        │
+│ - Skill management       │
+└─────────┬────────────────┘
+          │ REST (CLOB API)
+          ▼
+┌──────────────────────────┐
+│ Rust CLOB (:3030)        │  ← Matcher & Relay
 │──────────────────────────│
 │ - Order matching         │
-│ - Market lifecycle       │
-│ - Oracle resolution      │
-│ - Cross-channel updates  │
+│ - On-chain relaying      │
+│ - Local state persistence│
 └─────────┬────────────────┘
-          │ proofs
+          │ Match Submission
           ▼
 ┌──────────────────────────┐
-│ Yellow Network / L1      │
+│ On-Chain (CTF Contracts)  │
 └──────────────────────────┘
 ```
 
@@ -62,72 +68,53 @@ PolyBook is a **prediction markets platform** built for AI agents.
 
 ## Component Responsibilities
 
-| Component | Responsibilities |
-|-----------|-----------------|
-| **Smart Contracts** | Market creation, collateral escrow, oracle resolution, final settlement |
-| **CLOB** | Order matching, market lifecycle, real-time order book, settlement coordination |
-| **Daemon** | Agent-side runtime, key management, Yellow session, x402 API, order signing |
-| **Agent** | Decision-making, HTTP calls, x402 payments |
+| Component | Port | Responsibilities |
+|-----------|------|------------------|
+| **Agent Gateway** | `3402` | Public API, x402 payments, translating actor intents to skills. |
+| **Orchestrator** | `3031` | Market management, EIP-712 order signing, executing skills. |
+| **Rust CLOB** | `3030` | Matching BUY/SELL orders, relaying valid matches to the blockchain. |
+| **Smart Contracts** | N/A | Market primitives (USDC, CTF), condition preparation, final settlement. |
 
 ---
 
-## Identity Model
+## Lifecycle Overview (Trader)
 
-| Layer | Identity |
-|-------|----------|
-| Agent | None (stateless caller) |
-| Daemon | Local private key |
-| Yellow | Channel ID |
-| CLOB | Channel ID |
-
-**No usernames. No accounts. No sessions.**
-Identity is cryptographic and structural, not social.
-
----
-
-## Lifecycle Overview
-
-### First Run
-
-1. Agent installs PolyBook daemon
-2. Agent starts daemon
-3. Agent calls `POST /init`
-4. Daemon:
-   - Generates or loads key
-   - Authenticates to Yellow
-   - Creates channel
-   - Registers channel with CLOB
-5. Daemon returns `READY`
-
-### Normal Use
-
-1. Agent calls local endpoints
-2. Pays via x402
-3. Daemon signs + forwards actions to CLOB via Yellow
+1. **Agent** calls `POST /init` on Gateway.
+2. **Gateway** triggers `create_market` and `start_market` in Orchestrator.
+3. **Gateway** mints capital for the Actor via Orchestrator.
+4. **Agent** calls `POST /buy` with an intent.
+5. **Gateway** calls `place_order` in Orchestrator (returns signed EIP-712 order).
+6. **Orchestrator** submits order to **Rust CLOB**.
+7. **Rust CLOB** matches order and **Relays** to the blockchain.
 
 ---
 
 ## Project Structure
 
+```
+polybook/
 ├── contracts/              # Solidity smart contracts (Foundry)
 │   ├── src/
-│   │   ├── CTFExchange.sol
-│   │   ├── interfaces/
+│   │   ├── CTF/            # Conditional Token Framework
+│   │   ├── Exchange/       # CTF Exchange contracts
 │   │   └── mocks/
-│   └── test/
-│       └── PolyBook.t.sol
+│   └── script/
 │
-├── clob/                   # Rust CLOB (Orderbook-rs + Alloy)
-│   ├── src/
-│   │   ├── main.rs         # Entry point & Relay
-│   │   └── exchange.rs     # Solidity interfaces
-│   └── Cargo.toml
-│
-├── orchestrator/           # TypeScript Client & Demo Orchestrator
+├── clob/                   # Rust CLOB Service
 │   └── src/
-│       ├── index.ts        # Entry point
-│       ├── engine/         # State Manager (Client adaptation)
-│       └── market/         # Market lifecycle
+│       ├── main.rs         # Entry point, Actix-web API, and Relay
+│       └── ...
+│
+├── orchestrator/           # TypeScript Orchestrator Service
+│   └── src/
+│       ├── index.ts        # Fastify API Server
+│       ├── skills/         # Skill handling logic
+│       └── market/         # Market lifecycle management
+│
+├── agent-gateway/          # Agent-facing API (x402)
+│   └── src/
+│       ├── index.ts        # Fastify API Server
+│       └── x402/           # x402 Payment Middleware
 │
 ├── SKILL.md                # Source of truth for LLM assistants
 ├── DEV_GUIDE.md            # Development environment setup
@@ -142,33 +129,31 @@ Identity is cryptographic and structural, not social.
 
 ```bash
 cd contracts
-
-# Install dependencies
 forge install
-
-# Run tests
 forge test
-
-# Deploy to Sepolia
-forge script script/Deploy.s.sol --rpc-url $ALCHEMY_RPC_URL --broadcast
+# Start local node
+anvil
 ```
 
-### 2. Run Rust CLOB
+### 2. Start Services
+
 ```bash
-cd clob
-cargo run
+# Terminal 1: Rust CLOB
+cd clob && cargo run
+
+# Terminal 2: Orchestrator
+cd orchestrator && pnpm dev
+
+# Terminal 3: Agent Gateway
+cd agent-gateway && pnpm dev
 ```
 
-### 3. Run Demo Orchestrator
+### 3. E2E Test
+
 ```bash
-cd orchestrator
-pnpm install
-pnpm dev
+curl -X POST http://127.0.0.1:3402/init
+curl -X POST http://127.0.0.1:3402/buy -d '{"price": 0.5, "quantity": 10}'
 ```
-
-### 4. Agent Integration
-
-Read [SKILL.md](./SKILL.md) for the complete project context and API.
 
 ---
 
@@ -177,36 +162,24 @@ Read [SKILL.md](./SKILL.md) for the complete project context and API.
 ```mermaid
 sequenceDiagram
     participant Agent
-    participant Daemon as PolyBook Daemon
-    participant CLOB
-    participant Contract
-    participant Chainlink
+    participant Gateway as Agent Gateway
+    participant Orch as Orchestrator
+    participant CLOB as Rust CLOB
+    participant Chain as Blockchain (Anvil)
 
-    Agent->>Daemon: POST /init
-    Daemon-->>Agent: READY
+    Agent->>Gateway: POST /init
+    Gateway->>Orch: create_market (skill)
+    Gateway->>Orch: start_market (skill)
+    Gateway-->>Agent: INITIALIZED
 
-    Agent->>Daemon: discover_markets (x402)
-    Daemon->>CLOB: Query markets
-    CLOB-->>Daemon: Active markets
-    Daemon-->>Agent: Markets list
-
-    Agent->>Daemon: place_order (x402)
-    Daemon->>Daemon: Sign order
-    Daemon->>CLOB: Submit via Yellow
-    CLOB->>CLOB: Match in CLOB
-    CLOB-->>Daemon: Order status
-    Daemon-->>Agent: Order confirmation
-
-    Note over CLOB: expiryTimestamp reached
-
-    CLOB->>Contract: resolveMarket(stateRoot, proof)
-    Contract->>Chainlink: Get BTC price
-    Chainlink-->>Contract: $51,000 (UP wins!)
-
-    Agent->>Daemon: claim_settlement (x402)
-    Daemon->>Contract: claim()
-    Contract-->>Daemon: Payout
-    Daemon-->>Agent: Settlement confirmed
+    Agent->>Gateway: POST /buy (Intent)
+    Gateway->>Orch: place_order (skill)
+    Orch->>Orch: Sign EIP-712 Order
+    Orch->>CLOB: Submit Order
+    CLOB->>CLOB: Match with Liquidity
+    CLOB->>Chain: Relay matchOrders()
+    Chain-->>CLOB: Transaction Mined
+    CLOB-->>Agent: Order Success
 ```
 
 ---

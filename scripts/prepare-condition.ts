@@ -21,7 +21,7 @@ import {
     DEPLOYER_ADDRESS,
     CONTRACTS,
     RPC_URL,
-} from '../contracts.js';
+} from '../orchestrator/src/contracts.js';
 
 // ConditionalTokens ABI (subset needed)
 const CTF_ABI = [

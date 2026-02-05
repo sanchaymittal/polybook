@@ -1,7 +1,7 @@
 import { createPublicClient, createWalletClient, http, parseUnits } from 'viem';
 import { anvil } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
-import { CONTRACTS, RPC_URL } from '../contracts.js';
+import { CONTRACTS, RPC_URL } from '../orchestrator/src/contracts.js';
 
 const ADMIN_PK = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'; // Account #0
 const admin = privateKeyToAccount(ADMIN_PK);

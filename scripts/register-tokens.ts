@@ -12,8 +12,8 @@ import {
     DEPLOYER_PRIVATE_KEY,
     DEPLOYER_ADDRESS,
     RPC_URL,
-} from '../clob/src/contracts.js';
-import { MARKET_STATE } from '../clob/src/market-state.js';
+} from '../orchestrator/src/contracts.js';
+import { MARKET_STATE } from '../orchestrator/src/market-state.js';
 
 // CTFExchange ABI (relevant functions only)
 const EXCHANGE_ABI = parseAbi([

@@ -14,8 +14,8 @@ import {
     TRADER_A_PRIVATE_KEY,
     TRADER_A_ADDRESS,
     RPC_URL,
-} from '../clob/src/contracts.js';
-import { MARKET_STATE } from '../clob/src/market-state.js';
+} from '../orchestrator/src/contracts.js';
+import { MARKET_STATE } from '../orchestrator/src/market-state.js';
 
 // ConditionalTokens ABI
 const CTF_ABI = parseAbi([

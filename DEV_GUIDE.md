@@ -64,26 +64,71 @@ forge script script/Deploy.s.sol \
 
 ---
 
-## Quick Start (New Environment)
+## Quick Start (Local Environment)
 
+### 1. Setup Node
 ```bash
-# 1. Setup Node
 nvm use
-
-# 2. Install Dependencies
+npm install -g pnpm
 pnpm install
+```
 
-# 3. Setup Contracts
+### 2. Setup Contracts
+```bash
 cd contracts
 forge install
 forge test
-
-# 4. Setup CLOB
-cd ../clob
-pnpm install
-
-# 5. Connect Keys
-# Generate a random key for dev:
-cast wallet new
-# Copy Private Key to .env (PRIVATE_KEY=...)
+# Start anvil in a separate terminal
+anvil
 ```
+
+### 3. Setup services
+You need three terminals to run the core services:
+
+**Terminal 1: Rust CLOB (Matcher + Relay)**
+```bash
+cd clob
+cargo run
+```
+
+**Terminal 2: Orchestrator (Manager + Signer)**
+```bash
+cd orchestrator
+# Ensure .env has PRIVATE_KEY and RPC_URL=http://localhost:8545
+pnpm dev
+```
+
+**Terminal 3: Agent Gateway (x402 + Public API)**
+```bash
+cd agent-gateway
+pnpm dev
+```
+
+### 4. Verification (End-to-End Tests)
+
+We have two main E2E test scripts in the `orchestrator` service. Ensure all services in Step 3 are running before executing these.
+
+**Option A: Real E2E (Direct CLOB + On-chain)**
+This tests the full lifecycle including liquidity provision, order matching in the Rust CLOB, and on-chain settlement.
+```bash
+npx tsx scripts/real-e2e.ts
+```
+
+**Option B: Two-Trader E2E (Gateway + Orchestrator)**
+This tests the high-level API via the Agent Gateway and the Orchestrator's skill system.
+```bash
+npx tsx scripts/two-traders-e2e.ts
+```
+
+---
+
+## Service Configuration
+
+### Orchestrator `.env`
+- `PRIVATE_KEY`: Private key for the relay worker (Account #0 recommended for local)
+- `RPC_URL`: Local anvil URL (`http://localhost:8545`)
+- `CLOB_URL`: URL of the Rust CLOB (`http://localhost:3030`)
+
+### Agent Gateway `.env`
+- `ORCHESTRATOR_URL`: URL of the Orchestrator (`http://localhost:3031`)
+- `PORT`: 3402

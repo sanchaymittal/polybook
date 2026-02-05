@@ -1,8 +1,8 @@
 
 import { createPublicClient, http } from 'viem';
 import { anvil } from 'viem/chains';
-import { CONTRACTS, RPC_URL, LP_ADDRESS } from '../contracts.js';
-import { MARKET_STATE } from '../market-state.js';
+import { CONTRACTS, RPC_URL, LP_ADDRESS } from '../orchestrator/src/contracts.js';
+import { MARKET_STATE } from '../orchestrator/src/market-state.js';
 
 const CTF_ABI = [
     {

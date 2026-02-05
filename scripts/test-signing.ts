@@ -12,15 +12,15 @@ import {
     TRADER_A_ADDRESS,
     CONTRACTS,
     RPC_URL,
-} from '../contracts.js';
-import { MARKET_STATE } from '../market-state.js';
+} from '../orchestrator/src/contracts.js';
+import { MARKET_STATE } from '../orchestrator/src/market-state.js';
 import {
     createBuyOrder,
     createSellOrder,
     signOrder,
     Side,
     type Order,
-} from '../signing.js';
+} from '../orchestrator/src/signing.js';
 
 // Exchange ABI (subset for validation)
 const EXCHANGE_ABI = [

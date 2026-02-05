@@ -1,215 +1,87 @@
-/**
- * PolyBook Orchestrator - Main Entry Point
- *
- * Initializes and runs the market orchestrator service.
- */
+import Fastify from 'fastify';
 import { getConfig } from './config.js';
 import { MarketManager } from './market/index.js';
 import { SkillsHandler } from './skills/index.js';
-import { MarketState, Outcome, Side, OrderType } from './types.js';
-import { TRADER_A_ADDRESS, TRADER_B_ADDRESS, DEPLOYER_ADDRESS } from './contracts.js';
+import { DEPLOYER_ADDRESS } from './contracts.js';
+
+// BigInt JSON normalization
+(BigInt.prototype as any).toJSON = function () {
+    return this.toString();
+};
 
 /**
- * PolyBook CLOB Service
+ * PolyBook Orchestrator Service
  *
- * Main CLOB service that:
- * - Manages market lifecycle
- * - Routes agent skill requests
- * - Coordinates CLOB sessions
- * - (In production) Listens to on-chain events
+ * Exposes internal market logic and skills via REST API.
  */
-class PolyBookCLOB {
+class PolyBookOrchestrator {
     private config = getConfig();
     private marketManager: MarketManager;
     private skillsHandler: SkillsHandler;
+    private fastify = Fastify({ logger: true });
 
     constructor() {
         this.marketManager = new MarketManager();
         this.skillsHandler = new SkillsHandler(this.marketManager);
+
+        this.setupRoutes();
+    }
+
+    private setupRoutes() {
+        this.fastify.get('/status', async () => {
+            return { status: 'OK', service: 'orchestrator' };
+        });
+
+        // Main skill execution endpoint
+        this.fastify.post('/skill', async (request, reply) => {
+            const body = request.body as any;
+            console.log(`[Orchestrator] RECEIVED REQUEST: ${JSON.stringify(body)}`);
+
+            // Validate basic structure
+            if (!body.skill || !body.params) {
+                console.log('[Orchestrator] FAILED VALIDATION');
+                return reply.code(400).send({ error: 'Invalid skill request format' });
+            }
+
+            console.log(`[Orchestrator] Handling skill: ${body.skill}`);
+
+            const result = await this.skillsHandler.handleRequest({
+                skill: body.skill,
+                params: body.params,
+                agentAddress: body.agentAddress || DEPLOYER_ADDRESS,
+                timestamp: Date.now(),
+            });
+
+            console.log(`[Orchestrator] RESULT: ${JSON.stringify(result)}`);
+            return result;
+        });
+
+        // Market health/info
+        this.fastify.get('/markets', async () => {
+            return { markets: this.marketManager.getAllMarkets() };
+        });
     }
 
     /**
-     * Starts the CLOB service
+     * Starts the Orchestrator service
      */
     async start(): Promise<void> {
-        console.log('╔══════════════════════════════════════════════════════╗');
-        console.log('║             PolyBook CLOB Service Starting...        ║');
-        console.log('╠══════════════════════════════════════════════════════╣');
-        console.log(`║  Chain ID: ${this.config.chainId.toString().padEnd(42)}║`);
-        console.log(`║  Yellow WS: ${this.config.yellowWsUrl.slice(0, 40).padEnd(41)}║`);
-        console.log('╚══════════════════════════════════════════════════════╝');
-
-        // In production, this would:
-        // 1. Connect to Yellow Network WebSocket
-        // 2. Authenticate and establish session
-        // 3. Listen to on-chain events (MarketCreated, MarketStarted, etc.)
-        // 4. Start API server for agent skill requests
-
-        // For MVP, we'll demonstrate the flow with a mock scenario
-        await this.runDemoScenario();
-    }
-
-    /**
-     * Runs a demo scenario showing the market lifecycle
-     */
-    private async runDemoScenario(): Promise<void> {
-        console.log('\n=== Running Demo Scenario ===\n');
-
-        // 1. Create a market
-        console.log('1. Creating a market...');
-        const now = Date.now();
-        const createResult = await this.skillsHandler.handleRequest({
-            skill: 'skill.polybook.create_market',
-            params: {
-                template: 'BTC_UP_DOWN',
-                slug: 'btc-5min-demo',
-                startTimestamp: now + 2000,
-                expiryTimestamp: now + 60000,
-            },
-            agentAddress: DEPLOYER_ADDRESS,
-            timestamp: now,
-        });
-        console.log('Create result:', createResult);
-
-        // Wait for market to be ready
-        console.log('Waiting for market start time...');
-        await new Promise((resolve) => setTimeout(resolve, 2500));
-
-        // 2. Mint capital for agents
-        console.log('\n2. Minting capital for agents...');
-        const agent1 = TRADER_A_ADDRESS;
-        const agent2 = TRADER_B_ADDRESS;
-
-        await this.skillsHandler.handleRequest({
-            skill: 'skill.polybook.mint_capital',
-            params: { intent: 'Trading in prediction market' },
-            agentAddress: agent1,
-            timestamp: now,
-        });
-
-        await this.skillsHandler.handleRequest({
-            skill: 'skill.polybook.mint_capital',
-            params: { intent: 'Trading in prediction market' },
-            agentAddress: agent2,
-            timestamp: now,
-        });
-        console.log('Capital minted for both agents');
-
-        // 3. Simulate market start (normally from on-chain event)
-        console.log('\n3. Starting market (simulating MarketStarted event)...');
-        const marketId = 1;
-        const priceAtStart = 50000 * 1e8; // $50,000
-        this.marketManager.startMarket(marketId, priceAtStart);
-
-        // 4. Connect agents to CLOB
-        console.log('\n4. Connecting agents to CLOB...');
-        await this.skillsHandler.handleRequest({
-            skill: 'skill.polybook.connect_to_clob',
-            params: { marketId: 1 },
-            agentAddress: agent1,
-            timestamp: now,
-        });
-
-        await this.skillsHandler.handleRequest({
-            skill: 'skill.polybook.connect_to_clob',
-            params: { marketId: 1 },
-            agentAddress: agent2,
-            timestamp: now,
-        });
-        console.log('Both agents connected');
-
-        // 5. Place orders
-        console.log('\n5. Placing orders...');
-
-        // Agent1 buys UP at 0.60
-        const order1Result = await this.skillsHandler.handleRequest({
-            skill: 'skill.polybook.place_order',
-            params: {
-                marketId: 1,
-                side: Side.BUY,
-                outcome: Outcome.UP,
-                price: 0.60,
-                quantity: 10,
-                type: OrderType.LIMIT,
-            },
-            agentAddress: agent1,
-            timestamp: now,
-        });
-        console.log('Agent1 BUY UP order:', order1Result);
-
-        // Agent2 sells UP at 0.60
-        const order2Result = await this.skillsHandler.handleRequest({
-            skill: 'skill.polybook.place_order',
-            params: {
-                marketId: 1,
-                side: Side.SELL,
-                outcome: Outcome.UP,
-                price: 0.60,
-                quantity: 5,
-                type: OrderType.LIMIT,
-            },
-            agentAddress: agent2,
-            timestamp: now,
-        });
-        console.log('Agent2 SELL UP order:', order2Result);
-
-        // 6. Check positions
-        console.log('\n6. Checking positions...');
-        const pos1 = await this.skillsHandler.handleRequest({
-            skill: 'skill.polybook.get_positions',
-            params: { marketId: 1 },
-            agentAddress: agent1,
-            timestamp: now,
-        });
-        console.log('Agent1 position:', pos1);
-
-        const pos2 = await this.skillsHandler.handleRequest({
-            skill: 'skill.polybook.get_positions',
-            params: { marketId: 1 },
-            agentAddress: agent2,
-            timestamp: now,
-        });
-        console.log('Agent2 position:', pos2);
-
-        // 7. Get order book
-        console.log('\n7. Order book snapshot...');
-        const clob = this.marketManager.getCLOB(1);
-        if (clob) {
-            const books = await clob.getOrderBooks();
-            console.log('UP book:', books.up);
-            console.log('DOWN book:', books.down);
+        const port = 3031;
+        try {
+            await this.fastify.listen({ port, host: '0.0.0.0' });
+            console.log('╔══════════════════════════════════════════════════════╗');
+            console.log('║           PolyBook Orchestrator Listening...         ║');
+            console.log('╠══════════════════════════════════════════════════════╣');
+            console.log(`║  Port: ${port.toString().padEnd(46)}║`);
+            console.log(`║  Chain ID: ${this.config.chainId.toString().padEnd(42)}║`);
+            console.log('╚══════════════════════════════════════════════════════╝');
+        } catch (err) {
+            this.fastify.log.error(err);
+            process.exit(1);
         }
-
-        // 8. Freeze and export state
-        console.log('\n8. Freezing market and exporting state...');
-        this.marketManager.freezeMarket(1);
-        const stateExport = this.marketManager.exportStateForSettlement(1);
-        console.log('State export:', {
-            marketId: stateExport.marketId,
-            positionCount: stateExport.positions.length,
-            tradeCount: stateExport.finalizedTrades.length,
-            stateHash: stateExport.stateHash,
-        });
-
-        // 9. Record resolution
-        console.log('\n9. Recording resolution (simulating MarketResolved event)...');
-        this.marketManager.recordResolution(1, Outcome.UP);
-        console.log('Market resolved with outcome: UP');
-
-        // 10. Claim settlement
-        console.log('\n10. Claiming settlements...');
-        const claim1 = await this.skillsHandler.handleRequest({
-            skill: 'skill.polybook.claim_settlement',
-            params: { marketId: 1 },
-            agentAddress: agent1,
-            timestamp: now,
-        });
-        console.log('Agent1 claim result:', claim1);
-
-        console.log('\n=== Demo Complete ===\n');
     }
 }
 
 // Main entry
-const clobService = new PolyBookCLOB();
-clobService.start().catch(console.error);
+const orchestrator = new PolyBookOrchestrator();
+orchestrator.start().catch(console.error);
