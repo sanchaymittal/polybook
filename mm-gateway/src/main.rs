@@ -31,6 +31,31 @@ use mm_gateway::signer::OrderSigner;
 use mm_gateway::types::{OpenOrder, Side};
 use mm_gateway::utils::now_secs;
 
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+struct MarketMetadata {
+    market_id: String,
+    yes_token_id: String,
+    no_token_id: String,
+}
+
+#[derive(Deserialize)]
+struct GetMarketsResponse {
+    markets: Vec<MarketMetadata>,
+}
+
+async fn fetch_market_from_clob(config: &MMConfig) -> Result<MarketMetadata, Box<dyn std::error::Error>> {
+    let client = reqwest::Client::new();
+    let url = format!("{}/markets", config.clob_url);
+    let resp = client.get(&url).send().await?.json::<GetMarketsResponse>().await?;
+    
+    let target_id = config.market_id.to_string();
+    resp.markets.into_iter()
+        .find(|m| m.market_id == target_id)
+        .ok_or_else(|| format!("Market ID {} not found in registry", target_id).into())
+}
+
 /// Main entry point for the Market Maker Gateway
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -45,8 +70,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("╚══════════════════════════════════════════════════════╝");
 
     // Load configuration
-    let config = MMConfig::from_env()?;
+    let mut config = MMConfig::from_env()?;
     config.validate()?;
+
+    // Dynamic Discovery
+    if config.yes_token_id.is_empty() || config.no_token_id.is_empty() {
+        info!("Token IDs not set. Fetching from CLOB registry for Market ID {}...", config.market_id);
+        match fetch_market_from_clob(&config).await {
+            Ok(market) => {
+                config.yes_token_id = market.yes_token_id;
+                config.no_token_id = market.no_token_id;
+                info!("Resolved Token IDs:");
+                info!("  YES: {}", config.yes_token_id);
+                info!("  NO:  {}", config.no_token_id);
+            }
+            Err(e) => {
+                error!("Failed to fetch market config: {}", e);
+                return Err(e);
+            }
+        }
+    }
 
     info!("Configuration loaded:");
     info!("  Agent: {}", config.agent_address);

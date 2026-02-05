@@ -25,7 +25,7 @@ pub struct MMConfig {
     pub clob_url: String,
     pub rpc_url: String,
     pub chain_id: u64,
-
+    
     // Strategy parameters
     pub spread_bps: u64,        // Spread in basis points (e.g., 200 = 2%)
     pub order_size: u64,        // Order size in tokens (scaled 1e6)
@@ -56,14 +56,8 @@ impl MMConfig {
                 .unwrap_or_else(|_| "1".to_string())
                 .parse()
                 .unwrap_or(1),
-            yes_token_id: env::var("YES_TOKEN_ID").unwrap_or_else(|_| {
-                "41069470821908003820423618366673725376269941223722400569053573765861956451072"
-                    .to_string()
-            }),
-            no_token_id: env::var("NO_TOKEN_ID").unwrap_or_else(|_| {
-                "56313735484794408456925599043858882156820008852269395108189660012550632661236"
-                    .to_string()
-            }),
+            yes_token_id: env::var("YES_TOKEN_ID").unwrap_or_else(|_| "".to_string()),
+            no_token_id: env::var("NO_TOKEN_ID").unwrap_or_else(|_| "".to_string()),
 
             // Contract addresses (from local deployment)
             usdc_address: env::var("USDC_ADDR")

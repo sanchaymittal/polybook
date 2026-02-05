@@ -19,6 +19,7 @@ use alloy::signers::local::PrivateKeySigner;
 use alloy::network::EthereumWallet;
 use alloy::providers::ProviderBuilder;
 
+
 mod exchange {
     use alloy::sol;
     use serde::{Deserialize, Serialize};
@@ -58,7 +59,11 @@ mod exchange {
     }
 }
 
+mod api_token; // Register the new module
+mod api_market; // Register Market Registry
+
 use exchange::{ICTFExchange, Order};
+use api_market::MarketMetadata;
 
 /// Order request from Client
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -169,6 +174,8 @@ pub struct AppState {
     relay_tx: tokio::sync::mpsc::Sender<RelayCommand>,
     // Helpers
     trade_counter: RwLock<u64>,
+    // Market Registry
+    markets: DashMap<String, MarketMetadata>,
 }
 
 impl AppState {
@@ -183,6 +190,7 @@ impl AppState {
             trade_history: RwLock::new(Vec::new()),
             relay_tx,
             trade_counter: RwLock::new(0),
+            markets: DashMap::new(),
         }
     }
 }
@@ -200,19 +208,21 @@ pub enum RelayCommand {
 
 
 /// EIP-712 hashing and verification
+use alloy_sol_types::Eip712Domain;
+
 pub fn get_domain_separator(chain_id: u64, verifying_contract: Address) -> B256 {
-    let domain = alloy::sol_types::eip712_domain! {
-        name: "Polymarket CTF Exchange",
-        version: "1",
-        chain_id: chain_id,
-        verifying_contract: verifying_contract,
+    let domain = Eip712Domain {
+        name: Some("Polymarket CTF Exchange".to_string().into()),
+        version: Some("1".to_string().into()),
+        chain_id: Some(U256::from(chain_id)),
+        verifying_contract: Some(verifying_contract),
+        salt: None,
     };
-    domain.hash_struct()
+    domain.separator() 
 }
 
 pub fn verify_order_signature(order_req: &OrderRequest, domain_separator: B256) -> bool {
     // We define a local struct named 'Order' to match the EIP-712 type name used by the TS client.
-    // This ensures the typehash is keccak256("Order(...)")
     sol! {
         struct Order {
             uint256 salt;
@@ -254,6 +264,8 @@ pub fn verify_order_signature(order_req: &OrderRequest, domain_separator: B256) 
     encoded.extend_from_slice(domain_separator.as_slice());
     encoded.extend_from_slice(struct_hash.as_slice());
     let typed_data_hash = B256::from(alloy::primitives::keccak256(&encoded));
+
+    info!("Verifying signature against Exchange: {:?}", exchange_addr);
 
     if let Ok(sig) = alloy::primitives::Signature::try_from(order.signature.as_ref()) {
         if let Ok(recovered) = sig.recover_address_from_prehash(&typed_data_hash) {
@@ -347,6 +359,7 @@ async fn submit_order(
     let exchange_addr: Address = exchange_addr_str.parse().expect("Invalid Exchange Address");
     let domain_sep = get_domain_separator(chain_id, exchange_addr);
     
+    info!("Verifying signature against Exchange: {:?}", exchange_addr);
     if !verify_order_signature(&req, domain_sep) {
         return HttpResponse::BadRequest().json(OrderResponse {
             success: false,
@@ -355,6 +368,7 @@ async fn submit_order(
             error: Some("Invalid EIP-712 signature".to_string()),
         });
     }
+    info!("Signature verified successfully");
 
     let token_id = req.token_id.clone();
     let order_hash = req.order_hash.clone();
@@ -588,6 +602,13 @@ async fn main() -> std::io::Result<()> {
             .route("/order/{order_hash}", web::get().to(get_order))
             .route("/orderbook/{token_id}", web::get().to(get_orderbook))
             .route("/trades", web::get().to(get_trades))
+            // Token Operations
+            .route("/mint-dummy", web::post().to(api_token::mint_dummy))
+            .route("/split-position", web::post().to(api_token::split_position))
+            .route("/merge-position", web::post().to(api_token::merge_position))
+            // Market Registry
+            .route("/markets", web::get().to(api_market::get_markets))
+            .route("/admin/create-market", web::post().to(api_market::create_market))
     })
     .bind("127.0.0.1:3030")?
     .run()
