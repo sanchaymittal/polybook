@@ -265,7 +265,7 @@ pub fn verify_order_signature(order_req: &OrderRequest, domain_separator: B256) 
     encoded.extend_from_slice(struct_hash.as_slice());
     let typed_data_hash = B256::from(alloy::primitives::keccak256(&encoded));
 
-    info!("Verifying signature against Exchange: {:?}", exchange_addr);
+    info!("Verifying signature");
 
     if let Ok(sig) = alloy::primitives::Signature::try_from(order.signature.as_ref()) {
         if let Ok(recovered) = sig.recover_address_from_prehash(&typed_data_hash) {
@@ -609,6 +609,7 @@ async fn main() -> std::io::Result<()> {
             // Market Registry
             .route("/markets", web::get().to(api_market::get_markets))
             .route("/admin/create-market", web::post().to(api_market::create_market))
+            .route("/admin/import-market", web::post().to(api_market::import_market))
     })
     .bind("127.0.0.1:3030")?
     .run()

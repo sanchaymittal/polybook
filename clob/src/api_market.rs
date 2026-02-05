@@ -30,6 +30,16 @@ pub struct CreateMarketRequest {
     pub starting_price: Option<f64>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ImportMarketRequest {
+    pub slug: String,
+    pub question: String,
+    pub question_id: String,
+    pub condition_id: String,
+    pub yes_token_id: String,
+    pub no_token_id: String,
+}
+
 #[derive(Serialize)]
 pub struct CreateMarketResponse {
     pub success: bool,
@@ -177,6 +187,47 @@ pub async fn create_market(
     };
 
     data.markets.insert(market_id.clone(), metadata.clone());
+
+    HttpResponse::Ok().json(CreateMarketResponse {
+        success: true,
+        market_id: Some(market_id),
+        market: Some(metadata),
+        error: None,
+    })
+}
+
+/// POST /admin/import-market
+pub async fn import_market(
+    data: web::Data<Arc<AppState>>,
+    req: web::Json<ImportMarketRequest>,
+) -> HttpResponse {
+    let slug = req.slug.clone();
+    
+    // Check if exists
+    if let Some(m) = data.markets.iter().find(|m| m.slug == slug) {
+         return HttpResponse::Ok().json(CreateMarketResponse {
+            success: true,
+            market_id: Some(m.market_id.clone()),
+            market: Some(m.clone()),
+            error: None,
+        });
+    }
+
+    let market_id = (data.markets.len() + 1).to_string();
+    
+    let metadata = MarketMetadata {
+        market_id: market_id.clone(),
+        slug: slug.clone(),
+        question: req.question.clone(),
+        question_id: req.question_id.clone(),
+        condition_id: req.condition_id.clone(),
+        yes_token_id: req.yes_token_id.clone(),
+        no_token_id: req.no_token_id.clone(),
+        active: true,
+    };
+
+    data.markets.insert(market_id.clone(), metadata.clone());
+    info!("Imported external market: {} ({})", slug, market_id);
 
     HttpResponse::Ok().json(CreateMarketResponse {
         success: true,
