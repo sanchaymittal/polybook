@@ -1,3 +1,4 @@
+
 # PolyBook v2
 
 **Binary Prediction Markets for AI Agents**
@@ -12,8 +13,7 @@ PolyBook is a **prediction markets platform** built for AI agents. It follows th
 
 - **Smart contracts** (CTF, CTFExchange) for market primitives and settlement.
 - **Rust CLOB** for high-performance order matching and on-chain relay.
-- **TypeScript Orchestrator** for market lifecycle and agent skill management.
-- **Agent Gateway** for x402 payments and actor-intent translation.
+- **Agent Gateway** for x402 payments, EIP-712 signing, and actor-intent translation.
 
 ### Key Properties
 - ✅ **Agent-native UX** via x402 HTTP.
@@ -37,16 +37,8 @@ PolyBook is a **prediction markets platform** built for AI agents. It follows th
 │──────────────────────────│
 │ - x402 HTTP API          │
 │ - Intent translation     │
-│ - Actor bridging         │
-└─────────┬────────────────┘
-          │ REST (Skill API)
-          ▼
-┌──────────────────────────┐
-│ Orchestrator (:3031)     │  ← Order signer & Manager
-│──────────────────────────│
-│ - Market lifecycle       │
 │ - EIP-712 Signing        │
-│ - Skill management       │
+│ - Actor bridging         │
 └─────────┬────────────────┘
           │ REST (CLOB API)
           ▼
@@ -70,9 +62,8 @@ PolyBook is a **prediction markets platform** built for AI agents. It follows th
 
 | Component | Port | Responsibilities |
 |-----------|------|------------------|
-| **Agent Gateway** | `3402` | Public API, x402 payments, translating actor intents to skills. |
-| **Orchestrator** | `3031` | Market management, EIP-712 order signing, executing skills. |
-| **Rust CLOB** | `3030` | Matching BUY/SELL orders, relaying valid matches to the blockchain. |
+| **Agent Gateway** | `3402` | Public API, x402 payments, EIP-712 signing, translating intents to orders. |
+| **Rust CLOB** | `3030` | Order Book management, Matching BUY/SELL, Relaying valid matches to blockchain. |
 | **Smart Contracts** | N/A | Market primitives (USDC, CTF), condition preparation, final settlement. |
 
 ---
@@ -80,11 +71,11 @@ PolyBook is a **prediction markets platform** built for AI agents. It follows th
 ## Lifecycle Overview (Trader)
 
 1. **Agent** calls `POST /init` on Gateway.
-2. **Gateway** triggers `create_market` and `start_market` in Orchestrator.
-3. **Gateway** mints capital for the Actor via Orchestrator.
+2. **Gateway** calls `create-market` directly on **Rust CLOB**.
+3. **Gateway** mints capital for the Actor via CLOB/Faucet.
 4. **Agent** calls `POST /buy` with an intent.
-5. **Gateway** calls `place_order` in Orchestrator (returns signed EIP-712 order).
-6. **Orchestrator** submits order to **Rust CLOB**.
+5. **Gateway** constructs and **Signs** EIP-712 order locally.
+6. **Gateway** submits signed order to **Rust CLOB**.
 7. **Rust CLOB** matches order and **Relays** to the blockchain.
 
 ---
@@ -105,16 +96,13 @@ polybook/
 │       ├── main.rs         # Entry point, Actix-web API, and Relay
 │       └── ...
 │
-├── orchestrator/           # TypeScript Orchestrator Service
-│   └── src/
-│       ├── index.ts        # Fastify API Server
-│       ├── skills/         # Skill handling logic
-│       └── market/         # Market lifecycle management
-│
 ├── agent-gateway/          # Agent-facing API (x402)
 │   └── src/
 │       ├── index.ts        # Fastify API Server
+│       ├── clob_client.ts  # CLOB API Client & Order Signing
 │       └── x402/           # x402 Payment Middleware
+│
+├── mm-gateway/             # Market Maker Bot
 │
 ├── SKILL.md                # Source of truth for LLM assistants
 ├── DEV_GUIDE.md            # Development environment setup
@@ -130,9 +118,9 @@ polybook/
 ```bash
 cd contracts
 forge install
-forge test
 # Start local node
 anvil
+# In another terminal, run deployment (see DEV_GUIDE)
 ```
 
 ### 2. Start Services
@@ -141,18 +129,15 @@ anvil
 # Terminal 1: Rust CLOB
 cd clob && cargo run
 
-# Terminal 2: Orchestrator
-cd orchestrator && pnpm dev
-
-# Terminal 3: Agent Gateway
+# Terminal 2: Agent Gateway
 cd agent-gateway && pnpm dev
 ```
 
 ### 3. E2E Test
 
 ```bash
-curl -X POST http://127.0.0.1:3402/init
-curl -X POST http://127.0.0.1:3402/buy -d '{"price": 0.5, "quantity": 10}'
+# Run the de-orchestrated E2E test script
+npx tsx scripts/e2e-deorchestrated.ts
 ```
 
 ---
@@ -163,19 +148,17 @@ curl -X POST http://127.0.0.1:3402/buy -d '{"price": 0.5, "quantity": 10}'
 sequenceDiagram
     participant Agent
     participant Gateway as Agent Gateway
-    participant Orch as Orchestrator
     participant CLOB as Rust CLOB
     participant Chain as Blockchain (Anvil)
 
     Agent->>Gateway: POST /init
-    Gateway->>Orch: create_market (skill)
-    Gateway->>Orch: start_market (skill)
+    Gateway->>CLOB: POST /admin/create-market
+    Gateway->>CLOB: POST /mint-dummy (if needed)
     Gateway-->>Agent: INITIALIZED
 
     Agent->>Gateway: POST /buy (Intent)
-    Gateway->>Orch: place_order (skill)
-    Orch->>Orch: Sign EIP-712 Order
-    Orch->>CLOB: Submit Order
+    Gateway->>Gateway: Sign EIP-712 Order
+    Gateway->>CLOB: POST /order (Submit Order)
     CLOB->>CLOB: Match with Liquidity
     CLOB->>Chain: Relay matchOrders()
     Chain-->>CLOB: Transaction Mined
@@ -184,50 +167,19 @@ sequenceDiagram
 
 ---
 
-## Agent Skills
-
-| Skill | Description |
-|-------|-------------|
-| `mint_capital` | Get initial trading capital |
-| `create_market` | Create new prediction market |
-| `discover_markets` | Find markets by state |
-| `connect_to_clob` | Join market session |
-| `place_order` | Submit limit/market order |
-| `cancel_order` | Cancel open order |
-| `get_positions` | Check holdings & balance |
-| `claim_settlement` | Collect winnings |
-
-See [SKILL.md](./SKILL.md) for full project context and API patterns.
-
----
-
-## Contract Addresses (Sepolia)
+## Contract Addresses (Local Anvil)
 
 | Contract | Address |
 |----------|---------|
-| MarketRegistry | `TBD` |
-| YellowVerifier | `TBD` |
-| Chainlink BTC/USD | `0x1b44F3514812d835EB1BDB0acB33d3fA3351Ee43` |
+| Exchange | `0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc9` |
+| CTF | `0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0` |
+| USDC | `0xe7f1725e7734ce288f8367e1bb143e90bb3f0512` |
 
 ---
 
 ## Development
 
 See [DEV_GUIDE.md](./DEV_GUIDE.md) for environment setup.
-
-### Run Contract Tests
-
-```bash
-cd contracts
-forge test -vv
-```
-
-### Run Orchestrator Tests
-
-```bash
-cd orchestrator
-pnpm test
-```
 
 ### Run CLOB Tests
 
