@@ -11,7 +11,9 @@ use alloy::signers::local::PrivateKeySigner;
 use alloy::sol;
 use std::collections::HashMap;
 use std::str::FromStr;
+
 use tracing::{info, warn};
+use rand::seq::SliceRandom; // For random RPC selection
 
 use crate::config::MMConfig;
 use crate::types::Inventory;
@@ -61,7 +63,7 @@ sol! {
 
 /// Inventory manager for on-chain balance queries and seeding
 pub struct InventoryManager {
-    rpc_url: String,
+    rpc_urls: Vec<String>,
     signer: PrivateKeySigner,
     agent_address: Address,
     usdc_address: Address,
@@ -98,7 +100,7 @@ impl InventoryManager {
             .map_err(|e| format!("Invalid CTF address: {}", e))?;
 
         Ok(Self {
-            rpc_url: config.rpc_url.clone(),
+            rpc_urls: config.rpc_urls.clone(),
             signer,
             agent_address: config_address,
             usdc_address,
@@ -110,8 +112,11 @@ impl InventoryManager {
 
     /// Sync inventory from on-chain balances for a list of tokens
     pub async fn sync(&self, token_ids: &[String]) -> Result<Inventory, String> {
+        let rpc_url = self.rpc_urls.choose(&mut rand::thread_rng())
+            .ok_or("No RPC URLs available")?;
+
         let provider = ProviderBuilder::new()
-            .on_http(self.rpc_url.parse().map_err(|e| format!("Invalid RPC URL: {}", e))?);
+            .on_http(rpc_url.parse().map_err(|e| format!("Invalid RPC URL: {}", e))?);
 
         // Query USDC balance
         let usdc = IERC20::new(self.usdc_address, provider.clone());
@@ -150,12 +155,15 @@ impl InventoryManager {
 
     /// Ensure the agent has inventory by splitting position if needed
     pub async fn ensure_inventory(&self, condition_id_hex: &str, amount: u64) -> Result<(), String> {
+        let rpc_url = self.rpc_urls.choose(&mut rand::thread_rng())
+            .ok_or("No RPC URLs available")?;
+
         // Setup provider with signer wallet
         let wallet = EthereumWallet::from(self.signer.clone());
         let provider = ProviderBuilder::new()
             .with_recommended_fillers()
             .wallet(wallet)
-            .on_http(self.rpc_url.parse().unwrap());
+            .on_http(rpc_url.parse().unwrap());
 
         let condition_id = FixedBytes::<32>::from_str(condition_id_hex)
             .map_err(|e| format!("Invalid condition ID: {}", e))?;
@@ -198,12 +206,15 @@ impl InventoryManager {
 
     /// Check if an outcome is a winning one (payout > 0)
     pub async fn get_payout_numerator(&self, condition_id_hex: &str, index: u64) -> Result<u64, String> {
+        let rpc_url = self.rpc_urls.choose(&mut rand::thread_rng())
+            .ok_or("No RPC URLs available")?;
+
         // Setup provider
         let wallet = EthereumWallet::from(self.signer.clone());
         let provider = ProviderBuilder::new()
             .with_recommended_fillers()
             .wallet(wallet)
-            .on_http(self.rpc_url.parse().unwrap());
+            .on_http(rpc_url.parse().unwrap());
 
         let condition_id = FixedBytes::<32>::from_str(condition_id_hex)
             .map_err(|e| format!("Invalid condition ID: {}", e))?;
@@ -224,18 +235,21 @@ impl InventoryManager {
     }
 
     /// Redeem winning positions for collateral
-    pub async fn redeem_positions(&self, condition_id_hex: &str, index_set: u64, amount: u64) -> Result<(), String> {
+    pub async fn redeem_positions(&self, condition_id_hex: &str, index_set: u64) -> Result<(), String> {
+        let rpc_url = self.rpc_urls.choose(&mut rand::thread_rng())
+            .ok_or("No RPC URLs available")?;
+
         // Setup provider with signer wallet
         let wallet = EthereumWallet::from(self.signer.clone());
         let provider = ProviderBuilder::new()
             .with_recommended_fillers()
             .wallet(wallet)
-            .on_http(self.rpc_url.parse().unwrap());
+            .on_http(rpc_url.parse().unwrap());
 
         let condition_id = FixedBytes::<32>::from_str(condition_id_hex)
             .map_err(|e| format!("Invalid condition ID: {}", e))?;
         
-        let amount_u256 = U256::from(amount);
+
         let ctf = ICTF::new(self.ctf_address, provider.clone());
         let index_sets = vec![U256::from(index_set)];
 

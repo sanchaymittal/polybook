@@ -158,7 +158,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let yes_bal = inv.token_balances.get(&market.yes_token_id).unwrap_or(&0);
                         if *yes_bal > 0 {
                             info!("YES WON for {}. Found {} tokens. Redeeming...", market.slug, yes_bal);
-                            if let Err(e) = inventory_manager.redeem_positions(&market.condition_id, 2, *yes_bal).await {
+                            if let Err(e) = inventory_manager.redeem_positions(&market.condition_id, 2).await {
                                 warn!("Failed to redeem YES tokens for {}: {}", market.slug, e);
                             }
                         }
@@ -169,7 +169,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let no_bal = inv.token_balances.get(&market.no_token_id).unwrap_or(&0);
                         if *no_bal > 0 {
                             info!("NO WON for {}. Found {} tokens. Redeeming...", market.slug, no_bal);
-                            if let Err(e) = inventory_manager.redeem_positions(&market.condition_id, 1, *no_bal).await {
+                            if let Err(e) = inventory_manager.redeem_positions(&market.condition_id, 1).await {
                                 warn!("Failed to redeem NO tokens for {}: {}", market.slug, e);
                             }
                         }

@@ -23,7 +23,8 @@ pub struct MMConfig {
 
     // Service URLs
     pub clob_url: String,
-    pub rpc_url: String,
+    pub rpc_url: String, // Kept for logging/compatibility
+    pub rpc_urls: Vec<String>,
     pub chain_id: u64,
     
     // Strategy parameters
@@ -68,7 +69,12 @@ impl MMConfig {
 
             // Service URLs
             clob_url: env::var("CLOB_API_URL").expect("CLOB_API_URL not set"),
-            rpc_url: env::var("RPC_URL").expect("RPC_URL not set"),
+            rpc_url: env::var("RPC_URL").expect("RPC_URL not set"), // Keep raw string for display
+            rpc_urls: env::var("RPC_URL")
+                .expect("RPC_URL not set")
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .collect(),
             chain_id: env::var("CHAIN_ID")
                 .expect("CHAIN_ID not set")
                 .parse()
