@@ -28,7 +28,8 @@ const ARC_TESTNET = defineChain({
 export async function startSyncer() {
     const client = createPublicClient({
         chain: ARC_TESTNET,
-        transport: http()
+        transport: http(),
+        pollingInterval: 10_000, // Poll events every 10s instead of default 4s
     });
 
     console.log(`📡 Syncer started. Monitoring resolutions on ${ADAPTER_ADDRESS}...`);

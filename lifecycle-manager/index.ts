@@ -7,7 +7,7 @@ import dotenv from 'dotenv';
 dotenv.config({ path: '../.env' });
 
 const CLOB_API_URL = process.env.CLOB_API_URL || (() => { throw new Error("CLOB_API_URL not set") })();
-const CHECK_INTERVAL_MS = 10000; // 10 seconds for more precise 5-min alignment
+const CHECK_INTERVAL_MS = 30000; // 30 seconds for less RPC load
 
 import { createWalletClient, http, parseAbi, getAddress } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -46,7 +46,8 @@ async function checkAndResolveMarkets(activeMarkets: any[]) {
     for (const market of activeMarkets) {
         const match = market.slug.match(/(\d+)$/);
         if (match) {
-            const expiry = parseInt(match[1]);
+            const startTimestamp = parseInt(match[1]);
+            const expiry = startTimestamp + 300; // Fixed 5 min duration
             if (now > expiry) {
                 console.log(`⏰ Market ${market.slug} Expired! Triggering Resolution...`);
                 let shouldUpdateClob = false;
@@ -99,7 +100,10 @@ async function runLifecycle() {
             const rotationMarkets = activeMarkets.filter((m: any) => m.slug.startsWith("btc-up-and-down-5min"));
             const futureMarkets = rotationMarkets.filter((m: any) => {
                 const match = m.slug.match(/(\d+)$/);
-                return match && parseInt(match[1]) > now;
+                if (!match) return false;
+                const startTimestamp = parseInt(match[1]);
+                const expiry = startTimestamp + 300;
+                return expiry > now;
             });
 
             console.log(`📊 Found ${rotationMarkets.length} active rotation market(s). (${futureMarkets.length} are in the future)`);

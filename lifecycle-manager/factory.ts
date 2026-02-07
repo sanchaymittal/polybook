@@ -130,10 +130,11 @@ export async function createNextMarket() {
     const now = Math.floor(Date.now() / 1000);
     // Align to the next boundary (e.g. if now is 12:02, next expiration is 12:05)
     const nextBoundary = Math.floor(now / duration) * duration + duration;
+    const startTimestamp = nextBoundary - duration;
     const expiration = BigInt(nextBoundary);
 
-    const description = `btc-up-and-down-5min-${expiration}`;
-    const slug = `btc-up-and-down-5min-${expiration}`;
+    const description = `btc-up-and-down-5min-${startTimestamp}`;
+    const slug = `btc-up-and-down-5min-${startTimestamp}`;
 
     console.log(`🚀 Creating Automated Market: ${slug}`);
 

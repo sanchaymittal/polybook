@@ -622,7 +622,7 @@ async fn main() -> std::io::Result<()> {
             .route("/admin/import-market", web::post().to(api_market::import_market))
             .route("/admin/update-status", web::post().to(api_market::update_market_status))
     })
-    .bind("127.0.0.1:3030")?
+    .bind("0.0.0.0:3030")?
     .run()
     .await
 }

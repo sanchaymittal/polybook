@@ -33,12 +33,14 @@ use mm_gateway::utils::now_secs;
 
 use serde::Deserialize;
 
+
 #[derive(Deserialize, Debug)]
 struct MarketMetadata {
     market_id: String,
     slug: String,
     yes_token_id: String,
     no_token_id: String,
+    condition_id: String,
     status: String,
 }
 
@@ -78,6 +80,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("  Spread: {} bps", config.spread_bps);
     info!("  Order Size: {}", config.order_size);
     info!("  Quote Interval: {}ms", config.quote_interval_ms);
+    if config.seed_market {
+        info!("  SEEDING ENABLED: {} USDC", config.seed_amount);
+    }
 
     // Initialize components
     let order_signer = OrderSigner::new(&config)?;
@@ -134,6 +139,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
         };
+
+        // 1.5 Auto-Seed (Split Position) if enabled and inventory is empty for a market
+        if config.seed_market {
+            for market in &active_markets {
+                let yes_bal = inventory.token_balances.get(&market.yes_token_id).unwrap_or(&0);
+                let no_bal = inventory.token_balances.get(&market.no_token_id).unwrap_or(&0);
+
+                // If we have negligible tokens (less than order size), we might need to seed
+                if *yes_bal < config.order_size || *no_bal < config.order_size {
+                    // Check if we have enough USDC
+                    if inventory.usdc_balance >= config.seed_amount {
+                        info!("Seeding market {} with {} USDC...", market.slug, config.seed_amount);
+                        match inventory_manager.ensure_inventory(&market.condition_id, config.seed_amount).await {
+                            Ok(_) => info!("Seeding successful for {}", market.slug),
+                            Err(e) => warn!("Seeding failed for {}: {}", market.slug, e),
+                        }
+                    } else {
+                        warn!("Insufficient USDC to seed market {} (Need {}, Have {})", market.slug, config.seed_amount, inventory.usdc_balance);
+                    }
+                }
+            }
+        }
 
         // 2. Check for fills on existing orders
         match event_listener.poll_fills().await {

@@ -32,6 +32,10 @@ pub struct MMConfig {
     pub max_inventory: u64,     // Max position per side (scaled 1e6)
     pub quote_interval_ms: u64, // Quote refresh interval
     pub fair_price: f64,        // Initial fair price (0.0 - 1.0)
+
+    // Seeding (Optional)
+    pub seed_market: bool,
+    pub seed_amount: u64,       // Amount of USDC to split (scaled 1e6)
 }
 
 impl MMConfig {
@@ -87,10 +91,22 @@ impl MMConfig {
                 .unwrap_or_else(|_| "5000".to_string())
                 .parse()
                 .unwrap_or(5000),
+
+
             fair_price: env::var("FAIR_PRICE")
                 .unwrap_or_else(|_| "0.5".to_string())
                 .parse()
                 .unwrap_or(0.5),
+
+            // Seeding
+            seed_market: env::var("SEED_MARKET")
+                .unwrap_or_else(|_| "false".to_string())
+                .parse()
+                .unwrap_or(false),
+            seed_amount: env::var("SEED_AMOUNT")
+                .unwrap_or_else(|_| "1000000000".to_string()) // 1000 USDC default
+                .parse()
+                .unwrap_or(1_000_000_000),
         })
     }
 
