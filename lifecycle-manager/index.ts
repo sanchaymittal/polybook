@@ -9,7 +9,7 @@ dotenv.config({ path: '../.env' });
 const CLOB_API_URL = process.env.CLOB_API_URL || (() => { throw new Error("CLOB_API_URL not set") })();
 const CHECK_INTERVAL_MS = 30000; // 30 seconds for less RPC load
 
-import { createWalletClient, http, parseAbi, getAddress } from 'viem';
+import { createWalletClient, http, fallback, parseAbi, getAddress } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { defineChain } from 'viem';
 
@@ -26,8 +26,8 @@ const ARC_TESTNET = defineChain({
     network: 'arc-testnet',
     nativeCurrency: { decimals: 18, name: 'Ether', symbol: 'ETH' },
     rpcUrls: {
-        default: { http: [RPC_URL] },
-        public: { http: [RPC_URL] },
+        default: { http: RPC_URL.split(',').map(url => url.trim()) },
+        public: { http: RPC_URL.split(',').map(url => url.trim()) },
     },
 });
 
@@ -38,7 +38,7 @@ async function checkAndResolveMarkets(activeMarkets: any[]) {
     const wallet = createWalletClient({
         account,
         chain: ARC_TESTNET,
-        transport: http()
+        transport: fallback(RPC_URL.split(',').map(url => http(url.trim())))
     });
 
     const now = Math.floor(Date.now() / 1000);

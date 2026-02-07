@@ -34,6 +34,7 @@ alloy = { version = "0.8", features = ["full", "signer-local"] }
 alloy-sol-types = "0.8"
 hex = "0.4"
 dotenv = "0.15"
+rand = "0.8"
 
 [profile.release]
 opt-level = 3

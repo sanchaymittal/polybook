@@ -1,5 +1,5 @@
 
-import { createPublicClient, http, parseAbi, getAddress } from 'viem';
+import { createPublicClient, http, fallback, parseAbi, getAddress } from 'viem';
 import { defineChain } from 'viem';
 import axios from 'axios';
 import dotenv from 'dotenv';
@@ -20,15 +20,15 @@ const ARC_TESTNET = defineChain({
     network: 'arc-testnet',
     nativeCurrency: { decimals: 18, name: 'Ether', symbol: 'ETH' },
     rpcUrls: {
-        default: { http: [RPC_URL] },
-        public: { http: [RPC_URL] },
+        default: { http: RPC_URL.split(',').map(url => url.trim()) },
+        public: { http: RPC_URL.split(',').map(url => url.trim()) },
     },
 });
 
 export async function startSyncer() {
     const client = createPublicClient({
         chain: ARC_TESTNET,
-        transport: http(),
+        transport: fallback(RPC_URL.split(',').map(url => http(url.trim()))),
         pollingInterval: 10_000, // Poll events every 10s instead of default 4s
     });
 

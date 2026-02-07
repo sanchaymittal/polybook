@@ -68,7 +68,7 @@ services:
 #       - clob
 #     environment:
 #       - CLOB_API_URL=http://clob:3030
-#       - RPC_URL=https://rpc.testnet.arc.network
+#       - RPC_URL=https://rpc.testnet.arc.network,https://rpc.blockdaemon.testnet.arc.network,https://rpc.drpc.testnet.arc.network,https://rpc.quicknode.testnet.arc.network
 #       - MM_PRIVATE_KEY=0x92db14e403d8351233897f895870f02d70589c8a82fe81c7ff2099395213608d # Account 5 (Taker/Other MM)
 #       - MM_ADDRESS=0xa8d93Ad5Df49FA95ccE48261932b08eC3708DaF5
 #       - USDC_ADDRESS=${USDC_ADDRESS:-0x5fbdb2315678afecb367f032d93f642f64180aa3}

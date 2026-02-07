@@ -11,6 +11,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
+use rand::seq::SliceRandom;
+
 
 use alloy::sol;
 use alloy_sol_types::{sol_data, SolStruct, SolType};
@@ -282,8 +284,11 @@ async fn relay_worker(mut rx: tokio::sync::mpsc::Receiver<RelayCommand>) {
     info!("Relay Worker started");
     
     // Load config from environment or defaults
-    // Load config from environment or defaults
-    let rpc_url = std::env::var("RPC_URL").expect("RPC_URL not set");
+    let rpc_env = std::env::var("RPC_URL").expect("RPC_URL not set");
+    let rpc_urls: Vec<&str> = rpc_env.split(',').collect();
+    // Simple random selection at startup
+    let rpc_url = *rpc_urls.choose(&mut rand::thread_rng()).expect("RPC_URL must not be empty");
+
     let private_key = std::env::var("OPERATOR_PRIVATE_KEY")
         .or_else(|_| std::env::var("DEPLOYER_PRIVATE_KEY"))
         .expect("OPERATOR_PRIVATE_KEY or DEPLOYER_PRIVATE_KEY not set"); 

@@ -1,4 +1,4 @@
-import { createWalletClient, http, parseAbi, getAddress, keccak256, createPublicClient, defineChain, encodePacked } from 'viem';
+import { createWalletClient, http, fallback, parseAbi, getAddress, keccak256, createPublicClient, defineChain, encodePacked } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import axios from 'axios';
 import { ethers } from 'ethers';
@@ -112,8 +112,8 @@ const ARC_TESTNET = defineChain({
     network: 'arc-testnet',
     nativeCurrency: { decimals: 18, name: 'Ether', symbol: 'ETH' },
     rpcUrls: {
-        default: { http: [RPC_URL] },
-        public: { http: [RPC_URL] },
+        default: { http: RPC_URL.split(',').map(url => url.trim()) },
+        public: { http: RPC_URL.split(',').map(url => url.trim()) },
     },
 });
 
@@ -122,7 +122,7 @@ export async function createNextMarket() {
     const wallet = createWalletClient({
         account,
         chain: ARC_TESTNET,
-        transport: http()
+        transport: fallback(RPC_URL.split(',').map(url => http(url.trim())))
     });
 
     const assetId = "BTCUSD";
@@ -177,7 +177,7 @@ export async function createNextMarket() {
         console.log("⏳ Waiting for transaction confirmation...");
         const publicClient = createPublicClient({
             chain: ARC_TESTNET,
-            transport: http()
+            transport: fallback(RPC_URL.split(',').map(url => http(url.trim())))
         });
         const receipt = await publicClient.waitForTransactionReceipt({ hash: tx });
         if (receipt.status === 'reverted') {
@@ -227,7 +227,7 @@ export async function createNextMarket() {
 
     const publicClient = createPublicClient({
         chain: ARC_TESTNET,
-        transport: http()
+        transport: fallback(RPC_URL.split(',').map(url => http(url.trim())))
     });
 
     const collectionId1 = await publicClient.readContract({
@@ -267,7 +267,7 @@ export async function createNextMarket() {
         console.log("✅ Tokens Registered on Exchange!");
     } catch (e: any) {
         const msg = e.shortMessage || e.message || "";
-        if (msg.includes("AlreadyRegistered")) {
+        if (msg.includes("AlreadyRegistered") || msg.includes("0x3a81d6fc")) {
             console.log("⚠️ Tokens already registered on Exchange.");
         } else {
             console.error("❌ Token Registration Failed:", msg);

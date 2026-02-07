@@ -1,4 +1,4 @@
-import { createWalletClient, http, parseAbi, getAddress, encodeAbiParameters, parseAbiParameters } from 'viem';
+import { createWalletClient, http, fallback, parseAbi, getAddress, encodeAbiParameters, parseAbiParameters } from 'viem';
 import { ethers } from 'ethers';
 import { privateKeyToAccount } from 'viem/accounts';
 import { defineChain } from 'viem';
@@ -88,8 +88,8 @@ const ARC_TESTNET = defineChain({
     network: 'arc-testnet',
     nativeCurrency: { decimals: 18, name: 'Ether', symbol: 'ETH' },
     rpcUrls: {
-        default: { http: [RPC_URL] },
-        public: { http: [RPC_URL] },
+        default: { http: RPC_URL.split(',').map(url => url.trim()) },
+        public: { http: RPC_URL.split(',').map(url => url.trim()) },
     },
 });
 
@@ -101,7 +101,7 @@ export async function resolveMarket(questionID: string) {
     const wallet = createWalletClient({
         account,
         chain: ARC_TESTNET,
-        transport: http()
+        transport: fallback(RPC_URL.split(',').map(url => http(url.trim())))
     });
 
     const assetId = "BTCUSD";
