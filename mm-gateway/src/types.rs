@@ -120,21 +120,19 @@ pub struct TradesResponse {
     pub count: usize,
 }
 
+use std::collections::HashMap;
+
 /// MM inventory state
 #[derive(Debug, Clone, Default)]
 pub struct Inventory {
     /// Available USDC balance (scaled 1e6)
     pub usdc_balance: u64,
-    /// YES token balance (scaled 1e6)
-    pub yes_balance: u64,
-    /// NO token balance (scaled 1e6)
-    pub no_balance: u64,
+    /// Token balances indexed by Token ID (scaled 1e6)
+    pub token_balances: HashMap<String, u64>,
     /// USDC reserved for open buy orders
     pub usdc_reserved: u64,
-    /// YES tokens reserved for open sell orders
-    pub yes_reserved: u64,
-    /// NO tokens reserved for open sell orders
-    pub no_reserved: u64,
+    /// Tokens reserved for open sell orders indexed by Token ID (scaled 1e6)
+    pub token_reserved: HashMap<String, u64>,
 }
 
 impl Inventory {
@@ -143,14 +141,11 @@ impl Inventory {
         self.usdc_balance.saturating_sub(self.usdc_reserved)
     }
 
-    /// Available YES tokens for sell orders
-    pub fn available_yes(&self) -> u64 {
-        self.yes_balance.saturating_sub(self.yes_reserved)
-    }
-
-    /// Available NO tokens for sell orders
-    pub fn available_no(&self) -> u64 {
-        self.no_balance.saturating_sub(self.no_reserved)
+    /// Available token amount for sell orders
+    pub fn available_token(&self, token_id: &str) -> u64 {
+        let balance = self.token_balances.get(token_id).cloned().unwrap_or(0);
+        let reserved = self.token_reserved.get(token_id).cloned().unwrap_or(0);
+        balance.saturating_sub(reserved)
     }
 }
 

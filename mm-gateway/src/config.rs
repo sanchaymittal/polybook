@@ -11,10 +11,10 @@ pub struct MMConfig {
     pub agent_private_key: String,
     pub agent_address: String,
 
-    // Market identifiers
-    pub market_id: u64,
-    pub yes_token_id: String,
-    pub no_token_id: String,
+    // Market identifiers (Optional - will discover if missing)
+    pub market_id: Option<String>,
+    pub yes_token_id: Option<String>,
+    pub no_token_id: Option<String>,
 
     // Contract addresses
     pub usdc_address: String,
@@ -37,45 +37,38 @@ pub struct MMConfig {
 impl MMConfig {
     /// Load configuration from environment variables
     pub fn from_env() -> Result<Self, String> {
-        dotenv::dotenv().ok();
+        // Try local .env first, then parent directory
+        if dotenv::dotenv().is_err() {
+            let mut path = env::current_dir().unwrap();
+            path.pop();
+            path.push(".env");
+            dotenv::from_path(path).ok();
+        }
 
         Ok(Self {
             // Agent identity (required)
             agent_private_key: env::var("MM_PRIVATE_KEY")
                 .or_else(|_| env::var("DEPLOYER_PRIVATE_KEY"))
-                .unwrap_or_else(|_| {
-                    // Anvil account #4 as default MM
-                    "0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a".to_string()
-                }),
-            agent_address: env::var("MM_ADDRESS").unwrap_or_else(|_| {
-                "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65".to_string() // Anvil #4
-            }),
+                .expect("MM_PRIVATE_KEY or DEPLOYER_PRIVATE_KEY not set"),
+            agent_address: env::var("MM_ADDRESS").expect("MM_ADDRESS not set"),
 
             // Market identifiers
-            market_id: env::var("MARKET_ID")
-                .unwrap_or_else(|_| "1".to_string())
-                .parse()
-                .unwrap_or(1),
-            yes_token_id: env::var("YES_TOKEN_ID").unwrap_or_else(|_| "".to_string()),
-            no_token_id: env::var("NO_TOKEN_ID").unwrap_or_else(|_| "".to_string()),
+            market_id: env::var("MARKET_ID").ok(),
+            yes_token_id: env::var("YES_TOKEN_ID").ok(),
+            no_token_id: env::var("NO_TOKEN_ID").ok(),
 
-            // Contract addresses (from local deployment)
-            usdc_address: env::var("USDC_ADDR")
-                .unwrap_or_else(|_| "0x5fbdb2315678afecb367f032d93f642f64180aa3".to_string()),
-            ctf_address: env::var("CTF_ADDR")
-                .unwrap_or_else(|_| "0xe7f1725e7734ce288f8367e1bb143e90bb3f0512".to_string()),
-            exchange_address: env::var("EXCHANGE_ADDR")
-                .unwrap_or_else(|_| "0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0".to_string()),
+            // Contract addresses (from environment)
+            usdc_address: env::var("USDC_ADDRESS").expect("USDC_ADDRESS not set"),
+            ctf_address: env::var("CTF_ADDRESS").expect("CTF_ADDRESS not set"),
+            exchange_address: env::var("EXCHANGE_ADDRESS").expect("EXCHANGE_ADDRESS not set"),
 
             // Service URLs
-            clob_url: env::var("CLOB_URL")
-                .unwrap_or_else(|_| "http://127.0.0.1:3030".to_string()),
-            rpc_url: env::var("RPC_URL")
-                .unwrap_or_else(|_| "http://127.0.0.1:8545".to_string()),
+            clob_url: env::var("CLOB_API_URL").expect("CLOB_API_URL not set"),
+            rpc_url: env::var("RPC_URL").expect("RPC_URL not set"),
             chain_id: env::var("CHAIN_ID")
-                .unwrap_or_else(|_| "31337".to_string())
+                .expect("CHAIN_ID not set")
                 .parse()
-                .unwrap_or(31337),
+                .expect("CHAIN_ID must be a number"),
 
             // Strategy parameters
             spread_bps: env::var("SPREAD_BPS")

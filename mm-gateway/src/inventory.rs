@@ -26,19 +26,18 @@ sol! {
     }
 }
 
+use std::collections::HashMap;
+
 /// Inventory manager for on-chain balance queries
 pub struct InventoryManager {
     rpc_url: String,
     agent_address: Address,
     usdc_address: Address,
     ctf_address: Address,
-    yes_token_id: U256,
-    no_token_id: U256,
 
     // Local tracking of reserved amounts
     usdc_reserved: u64,
-    yes_reserved: u64,
-    no_reserved: u64,
+    token_reserved: HashMap<String, u64>,
 }
 
 impl InventoryManager {
@@ -59,27 +58,18 @@ impl InventoryManager {
             .parse()
             .map_err(|e| format!("Invalid CTF address: {}", e))?;
 
-        let yes_token_id = U256::from_str_radix(&config.yes_token_id, 10)
-            .map_err(|e| format!("Invalid YES token ID: {}", e))?;
-
-        let no_token_id = U256::from_str_radix(&config.no_token_id, 10)
-            .map_err(|e| format!("Invalid NO token ID: {}", e))?;
-
         Ok(Self {
             rpc_url: config.rpc_url.clone(),
             agent_address,
             usdc_address,
             ctf_address,
-            yes_token_id,
-            no_token_id,
             usdc_reserved: 0,
-            yes_reserved: 0,
-            no_reserved: 0,
+            token_reserved: HashMap::new(),
         })
     }
 
-    /// Sync inventory from on-chain balances
-    pub async fn sync(&self) -> Result<Inventory, String> {
+    /// Sync inventory from on-chain balances for a list of tokens
+    pub async fn sync(&self, token_ids: &[String]) -> Result<Inventory, String> {
         let provider = ProviderBuilder::new()
             .on_http(self.rpc_url.parse().map_err(|e| format!("Invalid RPC URL: {}", e))?);
 
@@ -92,41 +82,29 @@ impl InventoryManager {
             .map_err(|e| format!("USDC balance query failed: {}", e))?
             ._0;
 
-        // Query YES token balance
+        let usdc_u64 = usdc_balance.try_into().unwrap_or(u64::MAX);
+
+        // Query ERC-1155 token balances
         let ctf = IERC1155::new(self.ctf_address, provider.clone());
-        let yes_balance: U256 = ctf
-            .balanceOf(self.agent_address, self.yes_token_id)
-            .call()
-            .await
-            .map_err(|e| format!("YES balance query failed: {}", e))?
-            ._0;
+        let mut token_balances = HashMap::new();
 
-        // Query NO token balance
-        let no_balance: U256 = ctf
-            .balanceOf(self.agent_address, self.no_token_id)
-            .call()
-            .await
-            .map_err(|e| format!("NO balance query failed: {}", e))?
-            ._0;
+        for tid_str in token_ids {
+            let tid_u256 = U256::from_str_radix(tid_str, 10).map_err(|e| format!("Invalid token ID {}: {}", tid_str, e))?;
+            let balance: U256 = ctf
+                .balanceOf(self.agent_address, tid_u256)
+                .call()
+                .await
+                .map_err(|e| format!("Balance query failed for {}: {}", tid_str, e))?
+                ._0;
 
-        // Convert to u64 (safe for typical token amounts)
-        let usdc_u64 = usdc_balance
-            .try_into()
-            .unwrap_or(u64::MAX);
-        let yes_u64 = yes_balance
-            .try_into()
-            .unwrap_or(u64::MAX);
-        let no_u64 = no_balance
-            .try_into()
-            .unwrap_or(u64::MAX);
+            token_balances.insert(tid_str.clone(), balance.try_into().unwrap_or(u64::MAX));
+        }
 
         Ok(Inventory {
             usdc_balance: usdc_u64,
-            yes_balance: yes_u64,
-            no_balance: no_u64,
+            token_balances,
             usdc_reserved: self.usdc_reserved,
-            yes_reserved: self.yes_reserved,
-            no_reserved: self.no_reserved,
+            token_reserved: self.token_reserved.clone(),
         })
     }
 
@@ -135,35 +113,27 @@ impl InventoryManager {
         self.usdc_reserved = self.usdc_reserved.saturating_add(amount);
     }
 
-    /// Release USDC reservation (order cancelled or filled)
+    /// Release USDC reservation
     pub fn release_usdc(&mut self, amount: u64) {
         self.usdc_reserved = self.usdc_reserved.saturating_sub(amount);
     }
 
-    /// Reserve YES tokens for a sell order
-    pub fn reserve_yes(&mut self, amount: u64) {
-        self.yes_reserved = self.yes_reserved.saturating_add(amount);
+    /// Reserve tokens for a sell order
+    pub fn reserve_token(&mut self, token_id: &str, amount: u64) {
+        let entry = self.token_reserved.entry(token_id.to_string()).or_insert(0);
+        *entry = entry.saturating_add(amount);
     }
 
-    /// Release YES token reservation
-    pub fn release_yes(&mut self, amount: u64) {
-        self.yes_reserved = self.yes_reserved.saturating_sub(amount);
-    }
-
-    /// Reserve NO tokens for a sell order
-    pub fn reserve_no(&mut self, amount: u64) {
-        self.no_reserved = self.no_reserved.saturating_add(amount);
-    }
-
-    /// Release NO token reservation
-    pub fn release_no(&mut self, amount: u64) {
-        self.no_reserved = self.no_reserved.saturating_sub(amount);
+    /// Release token reservation
+    pub fn release_token(&mut self, token_id: &str, amount: u64) {
+        if let Some(reserved) = self.token_reserved.get_mut(token_id) {
+            *reserved = reserved.saturating_sub(amount);
+        }
     }
 
     /// Clear all reservations (e.g., on restart)
     pub fn clear_reservations(&mut self) {
         self.usdc_reserved = 0;
-        self.yes_reserved = 0;
-        self.no_reserved = 0;
+        self.token_reserved.clear();
     }
 }

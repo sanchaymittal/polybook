@@ -20,7 +20,9 @@ pub struct MarketMetadata {
     pub condition_id: String,
     pub yes_token_id: String,
     pub no_token_id: String,
-    pub active: bool,
+    pub status: String, // ACTIVE, RESOLVED, PAUSED
+    pub active: bool, // keeping for backward compat
+    pub payout_result: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -40,6 +42,13 @@ pub struct ImportMarketRequest {
     pub no_token_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UpdateStatusRequest {
+    pub market_id: String,
+    pub status: String, // ACTIVE, RESOLVED
+    pub result: Option<bool>,
+}
+
 #[derive(Serialize)]
 pub struct CreateMarketResponse {
     pub success: bool,
@@ -51,6 +60,11 @@ pub struct CreateMarketResponse {
 #[derive(Serialize)]
 pub struct GetMarketsResponse {
     pub markets: Vec<MarketMetadata>,
+}
+
+#[derive(Deserialize)]
+pub struct GetMarketsQuery {
+    pub status: Option<String>,
 }
 
 // --- Contracts ---
@@ -101,14 +115,13 @@ pub async fn create_market(
     use alloy::primitives::keccak256;
     let question_id = keccak256(slug.as_bytes());
     
-    let oracle_addr: Address = std::env::var("ORACLE_ADDRESS").expect("ORACLE set").parse().unwrap();
+    let oracle_addr: Address = std::env::var("ADAPTER_ADDRESS").expect("ADAPTER_ADDRESS set").parse().unwrap();
     let ctf_addr: Address = std::env::var("CTF_ADDRESS").expect("CTF set").parse().unwrap();
-    let usdc_addr: Address = std::env::var("USDC_ADDRESS").expect("USDC set").parse().unwrap();
+    let usdc_addr: Address = std::env::var("USDC_ADDRESS").expect("USDC_ADDRESS set").parse().unwrap();
 
     let ctf = ICTF::new(ctf_addr, provider.clone());
 
     // Prepare Condition
-    // Note: Provider is cloned locally so type inference matches.
     match ctf.prepareCondition(oracle_addr, question_id, U256::from(2)).send().await {
         Ok(p) => { 
             let _ = p.watch().await; 
@@ -173,17 +186,19 @@ pub async fn create_market(
     };
 
     // 4. Register Market
-    let market_id = (data.markets.len() + 1).to_string();
+    let market_id = format!("0x{:x}", condition_id);
     
     let metadata = MarketMetadata {
         market_id: market_id.clone(),
         slug: slug.clone(),
         question: req.question.clone(),
-        question_id: question_id.to_string(),
-        condition_id: condition_id.to_string(),
+        question_id: format!("0x{:x}", question_id),
+        condition_id: format!("0x{:x}", condition_id),
         yes_token_id: yes_token_id_u256.to_string(),
         no_token_id: no_token_id_u256.to_string(),
+        status: "ACTIVE".to_string(),
         active: true,
+        payout_result: None,
     };
 
     data.markets.insert(market_id.clone(), metadata.clone());
@@ -213,7 +228,7 @@ pub async fn import_market(
         });
     }
 
-    let market_id = (data.markets.len() + 1).to_string();
+    let market_id = req.condition_id.clone();
     
     let metadata = MarketMetadata {
         market_id: market_id.clone(),
@@ -223,7 +238,9 @@ pub async fn import_market(
         condition_id: req.condition_id.clone(),
         yes_token_id: req.yes_token_id.clone(),
         no_token_id: req.no_token_id.clone(),
+        status: "ACTIVE".to_string(),
         active: true,
+        payout_result: None,
     };
 
     data.markets.insert(market_id.clone(), metadata.clone());
@@ -237,8 +254,37 @@ pub async fn import_market(
     })
 }
 
+/// POST /admin/update-status
+pub async fn update_market_status(
+    data: web::Data<Arc<AppState>>,
+    req: web::Json<UpdateStatusRequest>,
+) -> HttpResponse {
+    if let Some(mut m) = data.markets.get_mut(&req.market_id) {
+        m.status = req.status.clone();
+        m.active = req.status == "ACTIVE";
+        m.payout_result = req.result;
+        info!("Updated market {} status to {} (result: {:?})", req.market_id, req.status, req.result);
+        HttpResponse::Ok().json(serde_json::json!({ "success": true }))
+    } else {
+        HttpResponse::NotFound().json(serde_json::json!({ "success": false, "error": "Market not found" }))
+    }
+}
+
 /// GET /markets
-pub async fn get_markets(data: web::Data<Arc<AppState>>) -> HttpResponse {
-    let markets: Vec<MarketMetadata> = data.markets.iter().map(|kv| kv.value().clone()).collect();
+/// Optional query param: ?status=ACTIVE|RESOLVED
+pub async fn get_markets(
+    data: web::Data<Arc<AppState>>,
+    query: web::Query<GetMarketsQuery>,
+) -> HttpResponse {
+    let markets: Vec<MarketMetadata> = data.markets.iter()
+        .filter(|m| {
+            if let Some(s) = &query.status {
+                m.status.to_uppercase() == s.to_uppercase()
+            } else {
+                true 
+            }
+        })
+        .map(|kv| kv.value().clone())
+        .collect();
     HttpResponse::Ok().json(GetMarketsResponse { markets })
 }

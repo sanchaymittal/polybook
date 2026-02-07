@@ -33,11 +33,13 @@ use mm_gateway::utils::now_secs;
 
 use serde::Deserialize;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 struct MarketMetadata {
     market_id: String,
+    slug: String,
     yes_token_id: String,
     no_token_id: String,
+    status: String,
 }
 
 #[derive(Deserialize)]
@@ -45,15 +47,11 @@ struct GetMarketsResponse {
     markets: Vec<MarketMetadata>,
 }
 
-async fn fetch_market_from_clob(config: &MMConfig) -> Result<MarketMetadata, Box<dyn std::error::Error>> {
+async fn fetch_active_markets(config: &MMConfig) -> Result<Vec<MarketMetadata>, Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
-    let url = format!("{}/markets", config.clob_url);
+    let url = format!("{}/markets?status=ACTIVE", config.clob_url);
     let resp = client.get(&url).send().await?.json::<GetMarketsResponse>().await?;
-    
-    let target_id = config.market_id.to_string();
-    resp.markets.into_iter()
-        .find(|m| m.market_id == target_id)
-        .ok_or_else(|| format!("Market ID {} not found in registry", target_id).into())
+    Ok(resp.markets)
 }
 
 /// Main entry point for the Market Maker Gateway
@@ -66,30 +64,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::subscriber::set_global_default(subscriber)?;
 
     info!("╔══════════════════════════════════════════════════════╗");
-    info!("║           MM-Gateway Starting...                     ║");
+    info!("║           MM-Gateway Multi-Market Starting...        ║");
     info!("╚══════════════════════════════════════════════════════╝");
 
     // Load configuration
-    let mut config = MMConfig::from_env()?;
+    let config = MMConfig::from_env()?;
     config.validate()?;
-
-    // Dynamic Discovery
-    if config.yes_token_id.is_empty() || config.no_token_id.is_empty() {
-        info!("Token IDs not set. Fetching from CLOB registry for Market ID {}...", config.market_id);
-        match fetch_market_from_clob(&config).await {
-            Ok(market) => {
-                config.yes_token_id = market.yes_token_id;
-                config.no_token_id = market.no_token_id;
-                info!("Resolved Token IDs:");
-                info!("  YES: {}", config.yes_token_id);
-                info!("  NO:  {}", config.no_token_id);
-            }
-            Err(e) => {
-                error!("Failed to fetch market config: {}", e);
-                return Err(e);
-            }
-        }
-    }
 
     info!("Configuration loaded:");
     info!("  Agent: {}", config.agent_address);
@@ -114,20 +94,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("CLOB connection verified");
 
     // Main runtime loop
-    info!("Starting main quoting loop...");
+    info!("Starting multi-market quoting loop...");
 
     loop {
-        // 1. Sync inventory from chain
-        let inventory = match inventory_manager.sync().await {
+        // 0. Discovery: Fetch active markets
+        let active_markets = match fetch_active_markets(&config).await {
+            Ok(m) => m,
+            Err(e) => {
+                warn!("Failed to fetch active markets: {}", e);
+                sleep(Duration::from_millis(config.quote_interval_ms)).await;
+                continue;
+            }
+        };
+
+        if active_markets.is_empty() {
+            info!("No active markets found. Waiting...");
+            sleep(Duration::from_millis(config.quote_interval_ms)).await;
+            continue;
+        }
+
+        // 1. Sync inventory for all active tokens
+        let mut all_tokens = Vec::new();
+        for m in &active_markets {
+            all_tokens.push(m.yes_token_id.clone());
+            all_tokens.push(m.no_token_id.clone());
+        }
+
+        let inventory = match inventory_manager.sync(&all_tokens).await {
             Ok(inv) => {
                 info!(
-                    "Inventory: USDC={} YES={} NO={}",
-                    inv.usdc_balance, inv.yes_balance, inv.no_balance
+                    "Inventory: USDC={} | Tracking {} tokens across {} markets",
+                    inv.usdc_balance, inv.token_balances.len(), active_markets.len()
                 );
                 inv
             }
             Err(e) => {
-                warn!("Failed to sync inventory: {}. Using cached.", e);
+                warn!("Failed to sync inventory: {}. Retrying...", e);
+                sleep(Duration::from_millis(config.quote_interval_ms)).await;
                 continue;
             }
         };
@@ -137,24 +140,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(fills) => {
                 if !fills.is_empty() {
                     info!("Detected {} fills on our orders", fills.len());
-                    // Release reservations for filled orders
                     for fill in &fills {
                         let qty: u64 = fill.quantity.parse().unwrap_or(0);
-                        // Simplified: assume YES sells for now
-                        inventory_manager.release_yes(qty);
+                        inventory_manager.release_token(&fill.token_id, qty);
                     }
                 }
             }
-            Err(e) => {
-                warn!("Failed to poll fills: {}", e);
-            }
+            Err(e) => warn!("Failed to poll fills: {}", e),
         }
 
-        // 3. Cancel stale orders (older than 5 minutes)
-        let stale_orders = event_listener.check_stale_orders(now_secs(), 300);
+        // 3. Cancel stale orders (older than 2 minutes for faster rotation)
+        let stale_orders = event_listener.check_stale_orders(now_secs(), 120);
         for order_hash in stale_orders {
             info!("Cancelling stale order: {}", order_hash);
-            // Find the order data before mutating
             let order_data = event_listener
                 .open_orders()
                 .iter()
@@ -162,109 +160,74 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .map(|o| (o.token_id.clone(), o.side, o.price, o.quantity));
 
             if let Some((token_id, side, price, quantity)) = order_data {
-                let _ = orderbook_adapter
-                    .cancel_order(&order_hash, &token_id)
-                    .await;
+                let _ = orderbook_adapter.cancel_order(&order_hash, &token_id).await;
                 event_listener.untrack_order(&order_hash);
 
-                // Release reservations
                 match side {
                     Side::BUY => {
                         let cost = (price as u128 * quantity as u128 / 1_000_000) as u64;
                         inventory_manager.release_usdc(cost);
                     }
                     Side::SELL => {
-                        inventory_manager.release_yes(quantity);
+                        inventory_manager.release_token(&token_id, quantity);
                     }
                 }
             }
         }
 
-        // 4. Generate new quotes
-        let quotes = quote_engine.generate_all_quotes(&inventory);
+        // 4. Loop through each market and quote
+        for market in &active_markets {
+            let quotes = quote_engine.generate_market_quotes(&inventory, &market.yes_token_id, &market.no_token_id);
 
-        if quotes.is_empty() {
-            info!("No quotes generated (insufficient inventory or limits reached)");
-        } else {
-            info!("Generated {} quotes", quotes.len());
-        }
+            for quote in quotes {
+                // Skip if we already have an order at this price/side
+                let existing = event_listener
+                    .orders_for_token(&quote.token_id)
+                    .iter()
+                    .any(|o| o.side == quote.side && o.price == quote.price);
 
-        // 5. Submit quotes as signed orders
-        for quote in quotes {
-            // Skip if we already have an order at this price/side
-            let existing = event_listener
-                .orders_for_token(&quote.token_id)
-                .iter()
-                .any(|o| o.side == quote.side && o.price == quote.price);
+                if existing {
+                    continue;
+                }
 
-            if existing {
-                continue; // Don't double-post at same price
-            }
+                match order_signer.sign_order(&quote.token_id, quote.side, quote.price, quote.quantity).await {
+                    Ok(order_request) => {
+                        let order_hash = order_request.order_hash.clone();
+                        match orderbook_adapter.submit_order(&order_request).await {
+                            Ok(response) => {
+                                if response.success {
+                                    info!(
+                                        "Order submitted: {} {} @ {} for market {}",
+                                        quote.side.as_str(), quote.token_id, quote.price, market.slug
+                                    );
 
-            match order_signer
-                .sign_order(&quote.token_id, quote.side, quote.price, quote.quantity)
-                .await
-            {
-                Ok(order_request) => {
-                    let order_hash = order_request.order_hash.clone();
+                                    event_listener.track_order(OpenOrder {
+                                        order_hash,
+                                        token_id: quote.token_id.clone(),
+                                        side: quote.side,
+                                        price: quote.price,
+                                        quantity: quote.quantity,
+                                        filled: 0,
+                                        timestamp: now_secs(),
+                                    });
 
-                    match orderbook_adapter.submit_order(&order_request).await {
-                        Ok(response) => {
-                            if response.success {
-                                info!(
-                                    "Order submitted: {} {} @ {} qty {}",
-                                    quote.side.as_str(),
-                                    quote.token_id,
-                                    quote.price,
-                                    quote.quantity
-                                );
-
-                                // Track the order
-                                event_listener.track_order(OpenOrder {
-                                    order_hash,
-                                    token_id: quote.token_id.clone(),
-                                    side: quote.side,
-                                    price: quote.price,
-                                    quantity: quote.quantity,
-                                    filled: 0,
-                                    timestamp: now_secs(),
-                                });
-
-                                // Reserve inventory
-                                match quote.side {
-                                    Side::BUY => {
-                                        let cost = (quote.price as u128 * quote.quantity as u128
-                                            / 1_000_000)
-                                            as u64;
-                                        inventory_manager.reserve_usdc(cost);
-                                    }
-                                    Side::SELL => {
-                                        if quote.token_id == config.yes_token_id {
-                                            inventory_manager.reserve_yes(quote.quantity);
-                                        } else {
-                                            inventory_manager.reserve_no(quote.quantity);
+                                    match quote.side {
+                                        Side::BUY => {
+                                            let cost = (quote.price as u128 * quote.quantity as u128 / 1_000_000) as u64;
+                                            inventory_manager.reserve_usdc(cost);
+                                        }
+                                        Side::SELL => {
+                                            inventory_manager.reserve_token(&quote.token_id, quote.quantity);
                                         }
                                     }
+                                } else {
+                                    warn!("Order rejected: {}", response.error.unwrap_or_default());
                                 }
-
-                                // Check if there were immediate fills
-                                if !response.trades.is_empty() {
-                                    info!("Immediate fills: {}", response.trades.len());
-                                }
-                            } else {
-                                warn!(
-                                    "Order rejected: {}",
-                                    response.error.unwrap_or_default()
-                                );
                             }
-                        }
-                        Err(e) => {
-                            warn!("Failed to submit order: {}", e);
+                            Err(e) => warn!("Failed to submit order: {}", e),
                         }
                     }
-                }
-                Err(e) => {
-                    error!("Failed to sign order: {}", e);
+                    Err(e) => error!("Failed to sign order: {}", e),
                 }
             }
         }

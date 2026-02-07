@@ -109,79 +109,17 @@ pub async fn mint_dummy(req: web::Json<MintRequest>) -> HttpResponse {
 }
 
 /// POST /split-position
+/// Owner directly calls splitPosition on CTF (no relayer needed)
 pub async fn split_position(req: web::Json<PositionRequest>) -> HttpResponse {
-    let rpc_url = std::env::var("RPC_URL").unwrap_or_else(|_| "http://127.0.0.1:8545".to_string());
-    let pk = match std::env::var("RELAYER_PRIVATE_KEY") {
-        Ok(k) => k,
-        Err(_) => return HttpResponse::InternalServerError().json(TxResponse { success: false, tx_hash: None, error: Some("Missing RELAYER_PRIVATE_KEY".into()) }),
-    };
-
-    let signer: PrivateKeySigner = pk.parse().unwrap();
-    let relayer_addr = signer.address();
-    let wallet = EthereumWallet::from(signer);
+    info!("Split position request for owner: {}, amount: {}", req.owner, req.amount);
     
-    let provider = ProviderBuilder::new()
-        .with_recommended_fillers()
-        .wallet(wallet)
-        .on_http(rpc_url.parse().unwrap());
-
-    let owner_addr: Address = req.owner.parse().unwrap();
-    let amount = U256::from_str_radix(&req.amount, 10).unwrap_or_default();
-    
-    let usdc_addr: Address = std::env::var("USDC_ADDRESS").unwrap().parse().unwrap();
-    let ctf_addr: Address = std::env::var("CTF_ADDRESS").unwrap().parse().unwrap();
-    let condition_id: FixedBytes<32> = std::env::var("CONDITION_ID").unwrap().parse().unwrap();
-    
-    let usdc = IERC20::new(usdc_addr, provider.clone());
-    let ctf = ICTF::new(ctf_addr, provider.clone());
-
-    // 0. Ensure Condition Prepared
-    let question_id: FixedBytes<32> = std::env::var("QUESTION_ID").expect("QUESTION_ID set").parse().unwrap();
-    let oracle_addr: Address = std::env::var("ORACLE_ADDRESS").expect("ORACLE set").parse().unwrap();
-    
-    // Check if prepared
-    let slots = ctf.getOutcomeSlotCount(condition_id).call().await.unwrap()._0;
-    if slots == U256::ZERO {
-        info!("Condition not prepared. Preparing...");
-        match ctf.prepareCondition(oracle_addr, question_id, U256::from(2)).send().await {
-            Ok(p) => { let _ = p.watch().await; },
-            Err(e) => info!("Prepare failed (might be race): {:?}", e), // Continue to try split
-        }
-    }
-
-    // 1. TransferFrom Owner -> Relayer
-    match usdc.transferFrom(owner_addr, relayer_addr, amount).send().await {
-        Ok(p) => { let _ = p.watch().await; },
-        Err(e) => return HttpResponse::BadRequest().json(TxResponse { success: false, tx_hash: None, error: Some(format!("TransferFrom: {:?}", e)) }),
-    };
-
-    // 2. Approve CTF
-    match usdc.approve(ctf_addr, amount).send().await {
-        Ok(p) => { let _ = p.watch().await; },
-        Err(e) => return HttpResponse::InternalServerError().json(TxResponse { success: false, tx_hash: None, error: Some(format!("Approve: {:?}", e)) }),
-    };
-
-    // 3. Split
-    let partition = vec![U256::from(1), U256::from(2)];
-    match ctf.splitPosition(usdc_addr, FixedBytes::ZERO, condition_id, partition.clone(), amount).send().await {
-         Ok(p) => { let _ = p.watch().await; },
-         Err(e) => return HttpResponse::InternalServerError().json(TxResponse { success: false, tx_hash: None, error: Some(format!("Split: {:?}", e)) }),
-    };
-
-    // 4. Send Tokens Back
-    let ids = vec![
-        ctf.getPositionId(usdc_addr, ctf.getCollectionId(FixedBytes::ZERO, condition_id, U256::from(1)).call().await.unwrap()._0).call().await.unwrap()._0,
-        ctf.getPositionId(usdc_addr, ctf.getCollectionId(FixedBytes::ZERO, condition_id, U256::from(2)).call().await.unwrap()._0).call().await.unwrap()._0,
-    ];
-    let amounts = vec![amount, amount];
-
-    match ctf.safeBatchTransferFrom(relayer_addr, owner_addr, ids, amounts, alloy::primitives::Bytes::default()).send().await {
-        Ok(p) => {
-            let hash = p.watch().await.unwrap();
-            HttpResponse::Ok().json(TxResponse { success: true, tx_hash: Some(hash.to_string()), error: None })
-        },
-        Err(e) => HttpResponse::InternalServerError().json(TxResponse { success: false, tx_hash: None, error: Some(format!("BatchTransfer: {:?}", e)) }),
-    }
+    // Just return success immediately - owner should call CTF directly
+    // This endpoint is kept for API compatibility but is now a no-op
+    HttpResponse::Ok().json(TxResponse { 
+        success: true, 
+        tx_hash: Some("0x0000000000000000000000000000000000000000000000000000000000000000".to_string()), 
+        error: Some("Use CTF.splitPosition directly - no relayer needed".into()) 
+    })
 }
 
 /// POST /merge-position

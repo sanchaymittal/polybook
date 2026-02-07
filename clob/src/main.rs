@@ -19,6 +19,8 @@ use alloy::signers::local::PrivateKeySigner;
 use alloy::network::EthereumWallet;
 use alloy::providers::ProviderBuilder;
 
+// Critical constants that MUST be provided via environment
+
 
 mod exchange {
     use alloy::sol;
@@ -280,12 +282,14 @@ async fn relay_worker(mut rx: tokio::sync::mpsc::Receiver<RelayCommand>) {
     info!("Relay Worker started");
     
     // Load config from environment or defaults
-    let rpc_url = std::env::var("RPC_URL").unwrap_or_else(|_| "http://127.0.0.1:8545".to_string());
+    // Load config from environment or defaults
+    let rpc_url = std::env::var("RPC_URL").expect("RPC_URL not set");
     let private_key = std::env::var("OPERATOR_PRIVATE_KEY")
         .or_else(|_| std::env::var("DEPLOYER_PRIVATE_KEY"))
-        .unwrap_or_else(|_| "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string()); // Default Anvil #0
-    let exchange_addr: Address = std::env::var("EXCHANGE_ADDR")
-        .unwrap_or_else(|_| "0xa85233C63b9Ee964Add6F2cffe00Fd84eb32338f".to_string())
+        .expect("OPERATOR_PRIVATE_KEY or DEPLOYER_PRIVATE_KEY not set"); 
+    let exchange_addr: Address = std::env::var("EXCHANGE_ADDRESS")
+        .or_else(|_| std::env::var("EXCHANGE_ADDR"))
+        .expect("EXCHANGE_ADDRESS not set")
         .parse().expect("Invalid Exchange Address");
 
     let signer: PrivateKeySigner = private_key.parse().expect("Invalid private key");
@@ -353,9 +357,10 @@ async fn submit_order(
     info!("Received order: {:?}", req);
 
     // 1. Verify Signature
-    let chain_id = 31337; // Anvil
-    let exchange_addr_str = std::env::var("EXCHANGE_ADDR")
-        .unwrap_or_else(|_| "0xa85233C63b9Ee964Add6F2cffe00Fd84eb32338f".to_string());
+    let chain_id = std::env::var("CHAIN_ID").expect("CHAIN_ID not set").parse::<u64>().expect("CHAIN_ID must be a number");
+    let exchange_addr_str = std::env::var("EXCHANGE_ADDRESS")
+        .or_else(|_| std::env::var("EXCHANGE_ADDR"))
+        .expect("EXCHANGE_ADDRESS not set");
     let exchange_addr: Address = exchange_addr_str.parse().expect("Invalid Exchange Address");
     let domain_sep = get_domain_separator(chain_id, exchange_addr);
     
@@ -581,7 +586,12 @@ pub struct TradesQuery { pub limit: Option<usize> }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    dotenv::dotenv().ok();
+    if dotenv::dotenv().is_err() {
+        let mut path = std::env::current_dir().unwrap();
+        path.pop();
+        path.push(".env");
+        dotenv::from_path(path).ok();
+    }
     let subscriber = FmtSubscriber::builder().with_max_level(Level::INFO).finish();
     tracing::subscriber::set_global_default(subscriber).ok();
 
@@ -610,6 +620,7 @@ async fn main() -> std::io::Result<()> {
             .route("/markets", web::get().to(api_market::get_markets))
             .route("/admin/create-market", web::post().to(api_market::create_market))
             .route("/admin/import-market", web::post().to(api_market::import_market))
+            .route("/admin/update-status", web::post().to(api_market::update_market_status))
     })
     .bind("127.0.0.1:3030")?
     .run()
