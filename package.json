@@ -1,7 +1,12 @@
 {
 	"dependencies": {
+		"@erc7824/nitrolite": "^0.5.3",
 		"axios": "^1.13.4",
 		"dotenv": "^17.2.4",
 		"viem": "^2.45.1"
+	},
+	"devDependencies": {
+		"@types/ws": "^8.18.1",
+		"ws": "^8.19.0"
 	}
 }

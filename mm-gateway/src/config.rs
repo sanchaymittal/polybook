@@ -26,6 +26,12 @@ pub struct MMConfig {
     pub rpc_url: String, // Kept for logging/compatibility
     pub rpc_urls: Vec<String>,
     pub chain_id: u64,
+
+    // Yellow Network
+    pub use_yellow: bool,
+    pub yellow_ws_url: String,
+    pub ctf_yellow_valve_address: String,
+    pub custody_address: String,
     
     // Strategy parameters
     pub spread_bps: u64,        // Spread in basis points (e.g., 200 = 2%)
