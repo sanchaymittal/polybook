@@ -33,6 +33,14 @@ We use Foundry (`forge`, `cast`, `anvil`) for Solidity development.
   foundryup
   ```
 
+### 4. Docker (Preferred)
+We use Docker Compose for running the full stack, especially on Arc Testnet.
+- **Reference**: [DOCKER_GUIDE.md](./DOCKER_GUIDE.md)
+- **Commands**:
+  ```bash
+  docker compose up -d --build
+  ```
+
 ---
 
 ## Quick Start (Local Environment)

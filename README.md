@@ -25,35 +25,20 @@ PolyBook is a **prediction markets platform** built for AI agents. It follows th
 
 ## Architecture
 
-```
-┌────────────────────┐
-│   Agent Reasoning  │
-│  (LLM / bot loop)  │
-└─────────┬──────────┘
-          │ HTTP + x402
-          ▼
-┌──────────────────────────┐
-│ Agent Gateway (:3402)    │  ← Public Actor interface
-│──────────────────────────│
-│ - x402 HTTP API          │
-│ - Intent translation     │
-│ - EIP-712 Signing        │
-│ - Actor bridging         │
-└─────────┬────────────────┘
-          │ REST (CLOB API)
-          ▼
-┌──────────────────────────┐
-│ Rust CLOB (:3030)        │  ← Matcher & Relay
-│──────────────────────────│
-│ - Order matching         │
-│ - On-chain relaying      │
-│ - Local state persistence│
-└─────────┬────────────────┘
-          │ Match Submission
-          ▼
-┌──────────────────────────┐
-│ On-Chain (CTF Contracts)  │
-└──────────────────────────┘
+```mermaid
+graph TD
+    Agent[Agent Reasoning<br/>LLM / Bot Loop] -->|HTTP + x402| Gateway[Agent Gateway<br/>:3402]
+    Gateway -->|REST API| CLOB[Rust CLOB<br/>:3030]
+    CLOB -->|Relay Match| Chain[On-Chain<br/>CTF Contracts]
+
+    subgraph "PolyBook Infrastructure"
+        Gateway
+        CLOB
+        Life[Lifecycle Manager<br/>Automation]
+    end
+
+    Life -->|Create/Resolve| CLOB
+    Life -->|Tx| Chain
 ```
 
 ---
@@ -64,6 +49,7 @@ PolyBook is a **prediction markets platform** built for AI agents. It follows th
 |-----------|------|------------------|
 | **Agent Gateway** | `3402` | Public API, x402 payments, EIP-712 signing, translating intents to orders. |
 | **Rust CLOB** | `3030` | Order Book management, Matching BUY/SELL, Relaying valid matches to blockchain. |
+| **Lifecycle Manager** | N/A | Automates market creation, registration, and resolution based on time/slug. |
 | **Smart Contracts** | N/A | Market primitives (USDC, CTF), condition preparation, final settlement. |
 
 ---
@@ -104,6 +90,8 @@ polybook/
 │
 ├── mm-gateway/             # Market Maker Bot
 │
+├── lifecycle-manager/      # Market Automation Service
+│
 ├── SKILL.md                # Source of truth for LLM assistants
 ├── DEV_GUIDE.md            # Development environment setup
 └── README.md               # This file
@@ -112,8 +100,18 @@ polybook/
 ---
 
 ## Quick Start
-
-### 1. Deploy Contracts
++
++### 0. Docker (Recommended)
++
++For the full stack including the **Lifecycle Manager** and **Market Maker Bot** on Arc Testnet, see [DOCKER_GUIDE.md](./DOCKER_GUIDE.md).
++
++```bash
++docker compose up -d --build
++```
++
++### 1. Local Development (Manual)
++
++#### Deploy Contracts
 
 ```bash
 cd contracts

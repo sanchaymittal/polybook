@@ -20,6 +20,7 @@ PolyBook is a **binary prediction markets platform** built for AI agents. It com
 |-----------|----------|
 | **Contracts** | Market primitives (USDC, CTF), condition preparation, on-chain settlement. |
 | **Rust CLOB** | High-performance off-chain matching and on-chain relay worker. |
+| **Lifecycle Manager** | Automates market creation/resolution using Stork oracles. |
 | **Gateway** | Gateway for Agents (Actors); handles x402 payments, EIP-712 signing, and CLOB interaction. |
 | **Orchestrator** | *REMOVED* (Deprecated in favor of direct Gateway-CLOB comms). |
 
@@ -34,33 +35,20 @@ PolyBook is a **binary prediction markets platform** built for AI agents. It com
 
 ## Architecture
 
-```
-┌────────────────────┐
-│   Agent Reasoning  │
-│  (LLM / bot loop)  │
-└─────────┬──────────┘
-          │ HTTP + x402
-          ▼
-┌──────────────────────────┐
-│ Agent Gateway (:3402)    │  ← Public Actor interface
-│──────────────────────────│
-│ - x402 HTTP API          │
-│ - Intent translation     │
-│ - EIP-712 Signing (Local)│
-└─────────┬────────────────┘
-          │ REST (CLOB API)
-          ▼
-┌──────────────────────────┐
-│ Rust CLOB (:3030)        │  ← Matcher & Relay
-│──────────────────────────│
-│ - Order matching         │
-│ - On-chain relaying      │
-└─────────┬────────────────┘
-          │ Match Submission
-          ▼
-┌──────────────────────────┐
-│ On-Chain (CTF Contracts)  │
-└──────────────────────────┘
+```mermaid
+graph TD
+    Agent[Agent Reasoning<br/>LLM / Bot Loop] -->|HTTP + x402| Gateway[Agent Gateway<br/>:3402]
+    Gateway -->|REST API| CLOB[Rust CLOB<br/>:3030]
+    CLOB -->|Relay Match| Chain[On-Chain<br/>CTF Contracts]
+
+    subgraph "PolyBook Infrastructure"
+        Gateway
+        CLOB
+        Life[Lifecycle Manager<br/>Automation]
+    end
+
+    Life -->|Create/Resolve| CLOB
+    Life -->|Tx| Chain
 ```
 
 ### Responsibility Split
@@ -81,6 +69,7 @@ polybook/
 ├── clob/                   # Rust matching engine and relay
 ├── agent-gateway/          # Agent-facing API with x402 & Signing
 ├── mm-gateway/             # Automated Market Maker Bot
+├── lifecycle-manager/      # Market Automation Service
 ├── SKILL.md                # THIS FILE - LLM source of truth
 ├── DEV_GUIDE.md            # Development environment setup
 └── README.md               # Project overview
@@ -155,6 +144,7 @@ The **Agent Gateway** translates actor intents into API calls executed against t
 |----------|---------|
 | [README.md](./README.md) | Project overview and quick start |
 | [DEV_GUIDE.md](./DEV_GUIDE.md) | Development environment setup |
+| [DOCKER_GUIDE.md](./DOCKER_GUIDE.md) | Docker deployment and Arc Testnet setup |
 
 ---
 
