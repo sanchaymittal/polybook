@@ -614,8 +614,7 @@ async fn main() -> std::io::Result<()> {
             .route("/trades", web::get().to(get_trades))
             // Token Operations
             .route("/mint-dummy", web::post().to(api_token::mint_dummy))
-            .route("/split-position", web::post().to(api_token::split_position))
-            .route("/merge-position", web::post().to(api_token::merge_position))
+            // Market Registry
             // Market Registry
             .route("/markets", web::get().to(api_market::get_markets))
             .route("/admin/create-market", web::post().to(api_market::create_market))

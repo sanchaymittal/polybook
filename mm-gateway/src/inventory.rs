@@ -44,6 +44,18 @@ sol! {
             uint256[] calldata partition,
             uint256 amount
         ) external;
+
+        function redeemPositions(
+            address collateralToken,
+            bytes32 parentCollectionId,
+            bytes32 conditionId,
+            uint256[] calldata indexSets
+        ) external;
+
+        function payoutNumerators(
+            bytes32 conditionId,
+            uint256 index
+        ) external view returns (uint256);
     }
 }
 
@@ -181,6 +193,65 @@ impl InventoryManager {
                 Ok(())
             },
             Err(e) => Err(format!("Failed to split position: {}", e)),
+        }
+    }
+
+    /// Check if an outcome is a winning one (payout > 0)
+    pub async fn get_payout_numerator(&self, condition_id_hex: &str, index: u64) -> Result<u64, String> {
+        // Setup provider
+        let wallet = EthereumWallet::from(self.signer.clone());
+        let provider = ProviderBuilder::new()
+            .with_recommended_fillers()
+            .wallet(wallet)
+            .on_http(self.rpc_url.parse().unwrap());
+
+        let condition_id = FixedBytes::<32>::from_str(condition_id_hex)
+            .map_err(|e| format!("Invalid condition ID: {}", e))?;
+        
+        let ctf = ICTF::new(self.ctf_address, provider.clone());
+        
+        // Note: index for binary is 0 or 1.
+        // But indexSets are 1 (1<<0) and 2 (1<<1). 
+        // payoutNumerators takes the outcome INDEX (0 or 1), NOT the index set.
+        // So passed 'index' here should be 0 for NO, 1 for YES.
+        match ctf.payoutNumerators(condition_id, U256::from(index)).call().await {
+            Ok(result) => {
+                let payout = result._0; // Returns uint256
+                Ok(payout.to::<u64>())
+            },
+            Err(e) => Err(format!("Failed to fetch payout: {}", e)),
+        }
+    }
+
+    /// Redeem winning positions for collateral
+    pub async fn redeem_positions(&self, condition_id_hex: &str, index_set: u64, amount: u64) -> Result<(), String> {
+        // Setup provider with signer wallet
+        let wallet = EthereumWallet::from(self.signer.clone());
+        let provider = ProviderBuilder::new()
+            .with_recommended_fillers()
+            .wallet(wallet)
+            .on_http(self.rpc_url.parse().unwrap());
+
+        let condition_id = FixedBytes::<32>::from_str(condition_id_hex)
+            .map_err(|e| format!("Invalid condition ID: {}", e))?;
+        
+        let amount_u256 = U256::from(amount);
+        let ctf = ICTF::new(self.ctf_address, provider.clone());
+        let index_sets = vec![U256::from(index_set)];
+
+        info!("Redeeming payouts for condition {} (IndexSet: {}, Amount: ALL)...", condition_id_hex, index_set);
+        match ctf.redeemPositions(
+            self.usdc_address, 
+            FixedBytes::ZERO, 
+            condition_id, 
+            index_sets
+        ).send().await {
+            Ok(builder) => { 
+                let hash = builder.watch().await.map_err(|e| format!("Tx watch failed: {}", e))?;
+                info!("Redemption successful! Tx: {}", hash);
+                Ok(())
+            },
+            Err(e) => Err(format!("Failed to redeem positions: {}", e)),
         }
     }
 

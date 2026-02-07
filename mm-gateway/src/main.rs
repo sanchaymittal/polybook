@@ -49,9 +49,9 @@ struct GetMarketsResponse {
     markets: Vec<MarketMetadata>,
 }
 
-async fn fetch_active_markets(config: &MMConfig) -> Result<Vec<MarketMetadata>, Box<dyn std::error::Error>> {
+async fn fetch_markets(config: &MMConfig, status: &str) -> Result<Vec<MarketMetadata>, Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
-    let url = format!("{}/markets?status=ACTIVE", config.clob_url);
+    let url = format!("{}/markets?status={}", config.clob_url, status);
     let resp = client.get(&url).send().await?.json::<GetMarketsResponse>().await?;
     Ok(resp.markets)
 }
@@ -103,7 +103,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         // 0. Discovery: Fetch active markets
-        let active_markets = match fetch_active_markets(&config).await {
+        let active_markets = match fetch_markets(&config, "ACTIVE").await {
             Ok(m) => m,
             Err(e) => {
                 warn!("Failed to fetch active markets: {}", e);
@@ -111,6 +111,72 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
         };
+
+        // 0b. Discovery: Fetch RESOLVED markets for redemption
+        let resolved_markets = match fetch_markets(&config, "RESOLVED").await {
+            Ok(m) => m,
+            Err(e) => {
+                 warn!("Failed to fetch resolved markets: {}", e);
+                 vec![] // Don't block main loop if this fails
+            }
+        };
+
+        // --- REDEMPTION LOGIC ---
+        if !resolved_markets.is_empty() {
+             let mut resolved_tokens = Vec::new();
+             for m in &resolved_markets {
+                 resolved_tokens.push(m.yes_token_id.clone());
+                 resolved_tokens.push(m.no_token_id.clone());
+             }
+             
+             if let Ok(inv) = inventory_manager.sync(&resolved_tokens).await {
+                 for market in &resolved_markets {
+                     // Check if outcomes won
+                     // Outcome 0 = NO (Index Set 1)
+                     // Outcome 1 = YES (Index Set 2)
+
+                     let no_payout = match inventory_manager.get_payout_numerator(&market.condition_id, 0).await {
+                         Ok(p) => p,
+                         Err(e) => {
+                             warn!("Failed to fetch NO payout for {}: {}", market.slug, e);
+                             0
+                         }
+                     };
+                     
+                     let yes_payout = match inventory_manager.get_payout_numerator(&market.condition_id, 1).await {
+                         Ok(p) => p,
+                         Err(e) => {
+                             warn!("Failed to fetch YES payout for {}: {}", market.slug, e);
+                             0
+                         }
+                     };
+
+                     info!("Market {} Payouts: NO={}, YES={}", market.slug, no_payout, yes_payout);
+
+                     // Check YES Tokens (Index Set 2, Outcome Index 1)
+                     if yes_payout > 0 {
+                        let yes_bal = inv.token_balances.get(&market.yes_token_id).unwrap_or(&0);
+                        if *yes_bal > 0 {
+                            info!("YES WON for {}. Found {} tokens. Redeeming...", market.slug, yes_bal);
+                            if let Err(e) = inventory_manager.redeem_positions(&market.condition_id, 2, *yes_bal).await {
+                                warn!("Failed to redeem YES tokens for {}: {}", market.slug, e);
+                            }
+                        }
+                     }
+
+                     // Check NO Tokens (Index Set 1, Outcome Index 0)
+                     if no_payout > 0 {
+                        let no_bal = inv.token_balances.get(&market.no_token_id).unwrap_or(&0);
+                        if *no_bal > 0 {
+                            info!("NO WON for {}. Found {} tokens. Redeeming...", market.slug, no_bal);
+                            if let Err(e) = inventory_manager.redeem_positions(&market.condition_id, 1, *no_bal).await {
+                                warn!("Failed to redeem NO tokens for {}: {}", market.slug, e);
+                            }
+                        }
+                     }
+                 }
+             }
+        }
 
         if active_markets.is_empty() {
             info!("No active markets found. Waiting...");
@@ -126,18 +192,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let inventory = match inventory_manager.sync(&all_tokens).await {
-            Ok(inv) => {
-                info!(
-                    "Inventory: USDC={} | Tracking {} tokens across {} markets",
-                    inv.usdc_balance, inv.token_balances.len(), active_markets.len()
-                );
-                inv
-            }
-            Err(e) => {
-                warn!("Failed to sync inventory: {}. Retrying...", e);
-                sleep(Duration::from_millis(config.quote_interval_ms)).await;
-                continue;
-            }
+             Ok(inv) => {
+                 info!(
+                     "Inventory: USDC={} | Tracking {} tokens across {} active markets",
+                     inv.usdc_balance, inv.token_balances.len(), active_markets.len()
+                 );
+                 inv
+             }
+             Err(e) => {
+                 warn!("Failed to sync inventory: {}. Retrying...", e);
+                 sleep(Duration::from_millis(config.quote_interval_ms)).await;
+                 continue;
+             }
         };
 
         // 1.5 Auto-Seed (Split Position) if enabled and inventory is empty for a market
