@@ -244,7 +244,9 @@ impl InventoryManager {
 
         if current_allowance._0 < U256::from(1_000_000_000_000u64) { // 1M USDC threshold
             info!("Ensuring USDC approval for {}...", if self.use_yellow { "YellowValve" } else { "CTF" });
-            match usdc.approve(spender, large_amount).send().await {
+            match usdc.approve(spender, large_amount)
+                .gas_price(10_000_000_000) // 10 Gwei
+                .send().await {
                 Ok(builder) => { let _ = builder.watch().await; },
                 Err(e) => return Err(format!("Failed to approve USDC for CTF: {}", e)),
             }
@@ -256,7 +258,9 @@ impl InventoryManager {
 
         if exchange_allowance._0 < U256::from(1_000_000_000_000u64) {
             info!("Ensuring USDC approval for Exchange ({})...", self.exchange_address);
-            match usdc.approve(self.exchange_address, large_amount).send().await {
+            match usdc.approve(self.exchange_address, large_amount)
+                .gas_price(10_000_000_000) // 10 Gwei
+                .send().await {
                 Ok(builder) => { let _ = builder.watch().await; },
                 Err(e) => return Err(format!("Failed to approve USDC for Exchange: {}", e)),
             }
@@ -269,7 +273,9 @@ impl InventoryManager {
 
         if !is_approved.approved {
             info!("Ensuring CTF setApprovalForAll for Exchange ({})...", self.exchange_address);
-            match ctf_tokens.setApprovalForAll(self.exchange_address, true).send().await {
+            match ctf_tokens.setApprovalForAll(self.exchange_address, true)
+                .gas_price(10_000_000_000) // 10 Gwei
+                .send().await {
                 Ok(builder) => { let _ = builder.watch().await; },
                 Err(e) => return Err(format!("Failed to approve CTF for Exchange: {}", e)),
             }
@@ -306,7 +312,9 @@ impl InventoryManager {
                  condition_id,
                  amount_u256,
                  partition
-             ).send().await {
+             )
+             .gas_price(10_000_000_000) // 10 Gwei
+             .send().await {
                  Ok(builder) => {
                      let hash = builder.watch().await.map_err(|e| format!("Tx watch failed: {}", e))?;
                      info!("Yellow onboarding successful! Tx: {}", hash);
@@ -325,7 +333,9 @@ impl InventoryManager {
                 condition_id, 
                 partition, 
                 amount_u256
-            ).send().await {
+            )
+            .gas_price(10_000_000_000) // 10 Gwei
+            .send().await {
                 Ok(builder) => { 
                     let hash = builder.watch().await.map_err(|e| format!("Tx watch failed: {}", e))?;
                     info!("Split position successful! Tx: {}", hash);
@@ -391,7 +401,9 @@ impl InventoryManager {
             FixedBytes::ZERO, 
             condition_id, 
             index_sets
-        ).send().await {
+        )
+        .gas_price(10_000_000_000) // 10 Gwei
+        .send().await {
             Ok(builder) => { 
                 let hash = builder.watch().await.map_err(|e| format!("Tx watch failed: {}", e))?;
                 info!("Redemption successful! Tx: {}", hash);
