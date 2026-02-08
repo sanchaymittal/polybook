@@ -166,9 +166,15 @@ async fn run_market_making_service(config: MMConfig) -> Result<(), Box<dyn std::
              }
         };
 
-        // 1.2. Auto-Refill (Hackathon Mode)
-        if inventory.usdc_balance < 5_000_000 { // Less than 5 USDC
-             info!("Low USDC balance ({}), triggering Auto-Refill...", inventory.usdc_balance);
+        // 1.2. Auto-Refill (Dynamic threshold)
+        let refill_threshold = if config.seed_market {
+            config.seed_amount
+        } else {
+            std::cmp::max(10_000_000, config.order_size) // 10 USDC or order size
+        };
+
+        if inventory.usdc_balance < refill_threshold {
+             info!("Low USDC balance ({}), triggering Auto-Refill (Threshold: {})...", inventory.usdc_balance, refill_threshold);
              if let Err(e) = orderbook_adapter.mint_dummy(&config.agent_address).await {
                  error!("Auto-Refill failed: {}", e);
              } else {

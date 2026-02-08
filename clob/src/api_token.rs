@@ -1,4 +1,5 @@
 use actix_web::{web, HttpResponse};
+use tracing::info;
 use serde::{Deserialize, Serialize};
 use alloy::sol;
 use alloy::primitives::{Address, U256};
@@ -95,10 +96,13 @@ pub async fn mint_dummy(req: web::Json<MintRequest>) -> HttpResponse {
     let to_addr: Address = req.address.parse().unwrap();
     let amount = U256::from_str_radix(&req.amount, 10).unwrap_or_default();
 
-    match contract.mint(to_addr, amount).send().await {
+    match contract.mint(to_addr, amount)
+        .gas_price(10_000_000_000) // 10 Gwei
+        .send().await {
         Ok(builder) => {
             // Return immediately with tx hash, don't wait for confirmation
             let tx_hash = *builder.tx_hash();
+            info!("Mint request successful (Gas: 10 Gwei), Hash: {:?}", tx_hash);
             HttpResponse::Ok().json(TxResponse { 
                 success: true, 
                 tx_hash: Some(format!("{:?}", tx_hash)), 
