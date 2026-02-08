@@ -1,4 +1,6 @@
-use actix_web::{web, HttpResponse};
+use actix_web::{web, HttpRequest, HttpResponse};
+use actix_web_actors::ws;
+use actix::prelude::*;
 use serde::{Deserialize, Serialize};
 use alloy::sol;
 use alloy::primitives::{Address, U256, FixedBytes, Keccak256};
@@ -7,7 +9,8 @@ use alloy::providers::ProviderBuilder;
 use alloy::signers::local::PrivateKeySigner;
 use tracing::{info, error};
 use std::sync::Arc;
-use crate::AppState;
+use crate::{AppState, OrderBookState};
+use tokio::sync::broadcast;
 
 // --- Data Structures ---
 
@@ -23,6 +26,13 @@ pub struct MarketMetadata {
     pub status: String, // ACTIVE, RESOLVED, PAUSED
     pub active: bool, // keeping for backward compat
     pub payout_result: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketOrderBookState {
+    pub market_id: String,
+    pub yes: OrderBookState,
+    pub no: OrderBookState,
 }
 
 #[derive(Debug, Deserialize)]
@@ -287,4 +297,130 @@ pub async fn get_markets(
         .map(|kv| kv.value().clone())
         .collect();
     HttpResponse::Ok().json(GetMarketsResponse { markets })
+}
+
+/// GET /orderbook/market/{market_id}
+pub async fn get_market_orderbook(
+    data: web::Data<Arc<AppState>>,
+    path: web::Path<String>,
+) -> HttpResponse {
+    let market_id = path.into_inner();
+    
+    if let Some(market) = data.markets.get(&market_id) {
+        let order_books = data.order_books.read().unwrap();
+        let yes_snapshot = crate::build_orderbook_snapshot(&order_books, &market.yes_token_id);
+        let no_snapshot = crate::build_orderbook_snapshot(&order_books, &market.no_token_id);
+        
+        HttpResponse::Ok().json(serde_json::json!({
+            "market_id": market_id,
+            "yes": yes_snapshot,
+            "no": no_snapshot,
+        }))
+    } else {
+        HttpResponse::NotFound().json(serde_json::json!({ "error": "Market not found" }))
+    }
+}
+
+fn build_market_orderbook_snapshot(state: &AppState, market_id: &str) -> Option<MarketOrderBookState> {
+    let market = state.markets.get(market_id)?;
+    let order_books = state.order_books.read().unwrap();
+    let yes = crate::build_orderbook_snapshot(&order_books, &market.yes_token_id);
+    let no = crate::build_orderbook_snapshot(&order_books, &market.no_token_id);
+    Some(MarketOrderBookState { market_id: market_id.to_string(), yes, no })
+}
+
+fn get_or_create_market_orderbook_tx(state: &AppState, market_id: &str) -> broadcast::Sender<MarketOrderBookState> {
+    if let Some(tx) = state.market_orderbook_txs.get(market_id) {
+        return tx.value().clone();
+    }
+    let (tx, _rx) = broadcast::channel(64);
+    state.market_orderbook_txs.insert(market_id.to_string(), tx.clone());
+    tx
+}
+
+fn publish_market_orderbook(state: &AppState, market_id: &str) {
+    if let Some(snapshot) = build_market_orderbook_snapshot(state, market_id) {
+        let tx = get_or_create_market_orderbook_tx(state, market_id);
+        let _ = tx.send(snapshot);
+    }
+}
+
+pub fn publish_market_orderbooks_for_token(state: &AppState, token_id: &str) {
+    for m in state.markets.iter() {
+        if m.yes_token_id == token_id || m.no_token_id == token_id {
+            publish_market_orderbook(state, &m.market_id);
+        }
+    }
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+struct MarketOrderbookText(String);
+
+struct MarketOrderbookWs {
+    market_id: String,
+    state: Arc<AppState>,
+    tx: broadcast::Sender<MarketOrderBookState>,
+}
+
+impl Actor for MarketOrderbookWs {
+    type Context = ws::WebsocketContext<Self>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        if let Some(snapshot) = build_market_orderbook_snapshot(&self.state, &self.market_id) {
+            if let Ok(text) = serde_json::to_string(&snapshot) {
+                ctx.text(text);
+            }
+        }
+
+        let mut rx = self.tx.subscribe();
+        let addr = ctx.address();
+        actix_rt::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(snapshot) => {
+                        if let Ok(text) = serde_json::to_string(&snapshot) {
+                            addr.do_send(MarketOrderbookText(text));
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+    }
+}
+
+impl Handler<MarketOrderbookText> for MarketOrderbookWs {
+    type Result = ();
+    fn handle(&mut self, msg: MarketOrderbookText, ctx: &mut Self::Context) {
+        ctx.text(msg.0);
+    }
+}
+
+impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MarketOrderbookWs {
+    fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
+        match msg {
+            Ok(ws::Message::Ping(msg)) => ctx.pong(&msg),
+            Ok(ws::Message::Close(reason)) => {
+                ctx.close(reason);
+                ctx.stop();
+            }
+            Ok(ws::Message::Text(_)) => {}
+            Ok(ws::Message::Binary(_)) => {}
+            _ => {}
+        }
+    }
+}
+
+pub async fn market_orderbook_ws(
+    data: web::Data<Arc<AppState>>,
+    req: HttpRequest,
+    stream: web::Payload,
+    path: web::Path<String>,
+) -> Result<HttpResponse, actix_web::Error> {
+    let market_id = path.into_inner();
+    let tx = get_or_create_market_orderbook_tx(&data, &market_id);
+    let ws = MarketOrderbookWs { market_id, state: data.get_ref().clone(), tx };
+    ws::start(ws, &req, stream)
 }

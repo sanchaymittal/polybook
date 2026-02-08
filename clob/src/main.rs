@@ -3,7 +3,9 @@
 //! Rust-based matching engine using orderbook-rs for the PolyBook prediction market.
 //! Exposes a simple HTTP API for the TypeScript CLOB to call.
 
-use actix_web::{web, App, HttpResponse, HttpServer};
+use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer};
+use actix_web_actors::ws;
+use actix::prelude::*;
 use dashmap::DashMap;
 use orderbook_rs::{OrderBook, OrderId, Side as OBSide, TimeInForce, TradeResult as OBTradeResult};
 use serde::{Deserialize, Serialize};
@@ -12,14 +14,16 @@ use std::sync::{Arc, RwLock};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 use rand::seq::SliceRandom;
+use tokio::sync::broadcast;
 
 
 use alloy::sol;
-use alloy_sol_types::{sol_data, SolStruct, SolType};
-use alloy::primitives::{address, Address, Bytes, FixedBytes, B256, U256};
+use alloy_sol_types::{SolStruct};
+use alloy::primitives::{Address, B256, U256};
 use alloy::signers::local::PrivateKeySigner;
 use alloy::network::EthereumWallet;
 use alloy::providers::ProviderBuilder;
+use alloy::signers::Signature;
 
 // Critical constants that MUST be provided via environment
 
@@ -67,7 +71,7 @@ mod api_token; // Register the new module
 mod api_market; // Register Market Registry
 
 use exchange::{ICTFExchange, Order};
-use api_market::MarketMetadata;
+use api_market::{MarketMetadata, MarketOrderBookState, publish_market_orderbooks_for_token};
 
 /// Order request from Client
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,7 +165,7 @@ pub struct OrderResponse {
 /// Application state shared across handlers
 pub struct AppState {
     // Map of token_id -> OrderBook
-    order_books: RwLock<HashMap<String, OrderBook>>,
+    pub(crate) order_books: RwLock<HashMap<String, OrderBook>>,
     // Map of order_hash -> order details
     orders: RwLock<HashMap<String, OrderRequest>>,
     // Map of order_id (from orderbook-rs) -> maker_address
@@ -179,7 +183,11 @@ pub struct AppState {
     // Helpers
     trade_counter: RwLock<u64>,
     // Market Registry
-    markets: DashMap<String, MarketMetadata>,
+    pub(crate) markets: DashMap<String, MarketMetadata>,
+    // Orderbook broadcast channels per token
+    orderbook_txs: DashMap<String, broadcast::Sender<OrderBookState>>,
+    // Orderbook broadcast channels per market
+    pub(crate) market_orderbook_txs: DashMap<String, broadcast::Sender<MarketOrderBookState>>,
 }
 
 impl AppState {
@@ -195,6 +203,8 @@ impl AppState {
             relay_tx,
             trade_counter: RwLock::new(0),
             markets: DashMap::new(),
+            orderbook_txs: DashMap::new(),
+            market_orderbook_txs: DashMap::new(),
         }
     }
 }
@@ -207,6 +217,117 @@ pub enum RelayCommand {
         taker_fill_amount: U256,
         maker_fill_amounts: Vec<U256>,
     },
+}
+
+pub fn build_orderbook_snapshot(order_books: &HashMap<String, OrderBook>, token_id: &str) -> OrderBookState {
+    if let Some(book) = order_books.get(token_id) {
+        let snapshot = book.create_snapshot(20);
+        let bids = snapshot.bids.iter().map(|l| PriceLevel {
+            price: l.price.to_string(),
+            quantity: l.visible_quantity.to_string(),
+            order_count: l.order_count as u32,
+        }).collect();
+        let asks = snapshot.asks.iter().map(|l| PriceLevel {
+            price: l.price.to_string(),
+            quantity: l.visible_quantity.to_string(),
+            order_count: l.order_count as u32,
+        }).collect();
+        OrderBookState { token_id: token_id.to_string(), bids, asks }
+    } else {
+        OrderBookState { token_id: token_id.to_string(), bids: vec![], asks: vec![] }
+    }
+}
+
+fn get_or_create_orderbook_tx(state: &AppState, token_id: &str) -> broadcast::Sender<OrderBookState> {
+    if let Some(tx) = state.orderbook_txs.get(token_id) {
+        return tx.value().clone();
+    }
+    let (tx, _rx) = broadcast::channel(64);
+    state.orderbook_txs.insert(token_id.to_string(), tx.clone());
+    tx
+}
+
+fn publish_orderbook(state: &AppState, token_id: &str) {
+    let snapshot = {
+        let order_books = state.order_books.read().unwrap();
+        build_orderbook_snapshot(&order_books, token_id)
+    };
+    let tx = get_or_create_orderbook_tx(state, token_id);
+    let _ = tx.send(snapshot);
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+struct OrderbookText(String);
+
+struct OrderbookWs {
+    token_id: String,
+    state: Arc<AppState>,
+    tx: broadcast::Sender<OrderBookState>,
+}
+
+impl Actor for OrderbookWs {
+    type Context = ws::WebsocketContext<Self>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        let snapshot = {
+            let order_books = self.state.order_books.read().unwrap();
+            build_orderbook_snapshot(&order_books, &self.token_id)
+        };
+        if let Ok(text) = serde_json::to_string(&snapshot) {
+            ctx.text(text);
+        }
+
+        let mut rx = self.tx.subscribe();
+        let addr = ctx.address();
+        actix_rt::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(snapshot) => {
+                        if let Ok(text) = serde_json::to_string(&snapshot) {
+                            addr.do_send(OrderbookText(text));
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+    }
+}
+
+impl Handler<OrderbookText> for OrderbookWs {
+    type Result = ();
+    fn handle(&mut self, msg: OrderbookText, ctx: &mut Self::Context) {
+        ctx.text(msg.0);
+    }
+}
+
+impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for OrderbookWs {
+    fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
+        match msg {
+            Ok(ws::Message::Ping(msg)) => ctx.pong(&msg),
+            Ok(ws::Message::Close(reason)) => {
+                ctx.close(reason);
+                ctx.stop();
+            }
+            Ok(ws::Message::Text(_)) => {}
+            Ok(ws::Message::Binary(_)) => {}
+            _ => {}
+        }
+    }
+}
+
+async fn orderbook_ws(
+    data: web::Data<Arc<AppState>>,
+    req: HttpRequest,
+    stream: web::Payload,
+    path: web::Path<String>,
+) -> Result<HttpResponse, actix_web::Error> {
+    let token_id = path.into_inner();
+    let tx = get_or_create_orderbook_tx(&data, &token_id);
+    let ws = OrderbookWs { token_id, state: data.get_ref().clone(), tx };
+    ws::start(ws, &req, stream)
 }
 
 
@@ -269,9 +390,7 @@ pub fn verify_order_signature(order_req: &OrderRequest, domain_separator: B256) 
     encoded.extend_from_slice(struct_hash.as_slice());
     let typed_data_hash = B256::from(alloy::primitives::keccak256(&encoded));
 
-    info!("Verifying signature");
-
-    if let Ok(sig) = alloy::primitives::Signature::try_from(order.signature.as_ref()) {
+    if let Ok(sig) = Signature::try_from(order.signature.as_ref()) {
         if let Ok(recovered) = sig.recover_address_from_prehash(&typed_data_hash) {
             return recovered == order.signer;
         }
@@ -423,87 +542,98 @@ async fn submit_order(
         }
     });
 
-    let mut order_books = data.order_books.write().unwrap();
-    let book = order_books
-        .entry(token_id.clone())
-        .or_insert_with(|| OrderBook::with_trade_listener(&token_id, trade_listener));
+    let result = {
+        let mut order_books = data.order_books.write().unwrap();
+        let book = order_books
+            .entry(token_id.clone())
+            .or_insert_with(|| OrderBook::with_trade_listener(&token_id, trade_listener));
 
-    let price: u128 = req.price.parse().unwrap_or(0);
-    let quantity: u64 = req.quantity.parse().unwrap_or(0);
+        let price: u128 = req.price.parse().unwrap_or(0);
+        let quantity: u64 = req.quantity.parse().unwrap_or(0);
 
-    let order_id = OrderId::new_uuid();
-    let order_id_str = order_id.to_string();
+        let order_id = OrderId::new_uuid();
+        let order_id_str = order_id.to_string();
 
-    data.order_makers.insert(order_id_str.clone(), req.maker.clone());
-    data.order_id_to_hash.insert(order_id_str.clone(), order_hash.clone());
-    data.order_hash_to_id.insert(order_hash.clone(), order_id_str.clone());
+        data.order_makers.insert(order_id_str.clone(), req.maker.clone());
+        data.order_id_to_hash.insert(order_id_str.clone(), order_hash.clone());
+        data.order_hash_to_id.insert(order_hash.clone(), order_id_str.clone());
 
-    let side = if req.side == "BUY" { OBSide::Buy } else { OBSide::Sell };
+        let side = if req.side == "BUY" { OBSide::Buy } else { OBSide::Sell };
 
-    match book.add_limit_order(order_id, price, quantity, side, TimeInForce::Gtc, None) {
-        Ok(ob_order) => {
-            info!("Order {} added", ob_order.id());
+        match book.add_limit_order(order_id, price, quantity, side, TimeInForce::Gtc, None) {
+            Ok(ob_order) => {
+                info!("Order {} added", ob_order.id());
 
-            let captured = data.captured_trades.remove(&order_id_str).map(|(_, v)| v).unwrap_or_default();
-            
-            let mut processed_trades = Vec::new();
-            for mut t in captured {
-                t.taker_order_hash = order_hash.clone();
-                let is_taker_buy = req.side == "BUY";
+                let captured = data.captured_trades.remove(&order_id_str).map(|(_, v)| v).unwrap_or_default();
                 
-                let maker_uuid = t.maker_order_hashes[0].clone();
-                let maker_addr = data.order_makers.get(&maker_uuid)
-                    .map(|v| v.value().clone())
-                    .unwrap_or_else(|| "unknown".to_string());
-                
-                if is_taker_buy {
-                    t.buyer = req.maker.clone();
-                    t.seller = maker_addr;
-                } else {
-                    t.buyer = maker_addr;
-                    t.seller = req.maker.clone();
-                }
-
-                let maker_req = if let Some(h) = data.order_id_to_hash.get(&maker_uuid) {
-                    data.orders.read().unwrap().get(h.value()).cloned()
-                } else {
-                    None
-                };
-
-                if let Some(m_req) = maker_req {
-                    t.maker_order_hashes[0] = m_req.order_hash.clone();
-                    processed_trades.push(t);
-
-                    // Send to Relay
-                    let last_trade = processed_trades.last().unwrap();
-                    let quantity_bi = U256::from_str_radix(&last_trade.quantity, 10).unwrap_or_default();
-                    let price_bi = U256::from_str_radix(&last_trade.price, 10).unwrap_or_default();
+                let mut processed_trades = Vec::new();
+                for mut t in captured {
+                    t.taker_order_hash = order_hash.clone();
+                    let is_taker_buy = req.side == "BUY";
                     
-                    let taker_fill: U256;
-                    let maker_fill: U256;
+                    let maker_uuid = t.maker_order_hashes[0].clone();
+                    let maker_addr = data.order_makers.get(&maker_uuid)
+                        .map(|v| v.value().clone())
+                        .unwrap_or_else(|| "unknown".to_string());
                     
                     if is_taker_buy {
-                        taker_fill = (quantity_bi * price_bi) / U256::from(1_000_000);
-                        maker_fill = quantity_bi;
+                        t.buyer = req.maker.clone();
+                        t.seller = maker_addr;
                     } else {
-                        taker_fill = quantity_bi;
-                        maker_fill = (quantity_bi * price_bi) / U256::from(1_000_000);
+                        t.buyer = maker_addr;
+                        t.seller = req.maker.clone();
                     }
 
-                    let _ = data.relay_tx.try_send(RelayCommand::ExecuteMatch {
-                        taker_order: req.clone(),
-                        maker_orders: vec![m_req],
-                        taker_fill_amount: taker_fill,
-                        maker_fill_amounts: vec![maker_fill],
-                    });
+                    let maker_req = if let Some(h) = data.order_id_to_hash.get(&maker_uuid) {
+                        data.orders.read().unwrap().get(h.value()).cloned()
+                    } else {
+                        None
+                    };
+
+                    if let Some(m_req) = maker_req {
+                        t.maker_order_hashes[0] = m_req.order_hash.clone();
+                        processed_trades.push(t);
+
+                        // Send to Relay
+                        let last_trade = processed_trades.last().unwrap();
+                        let quantity_bi = U256::from_str_radix(&last_trade.quantity, 10).unwrap_or_default();
+                        let price_bi = U256::from_str_radix(&last_trade.price, 10).unwrap_or_default();
+                        
+                        let taker_fill: U256;
+                        let maker_fill: U256;
+                        
+                        if is_taker_buy {
+                            taker_fill = (quantity_bi * price_bi) / U256::from(1_000_000);
+                            maker_fill = quantity_bi;
+                        } else {
+                            taker_fill = quantity_bi;
+                            maker_fill = (quantity_bi * price_bi) / U256::from(1_000_000);
+                        }
+
+                        let _ = data.relay_tx.try_send(RelayCommand::ExecuteMatch {
+                            taker_order: req.clone(),
+                            maker_orders: vec![m_req],
+                            taker_fill_amount: taker_fill,
+                            maker_fill_amounts: vec![maker_fill],
+                        });
+                    }
                 }
-            }
 
-            {
-                let mut history = data.trade_history.write().unwrap();
-                history.extend(processed_trades.clone());
-            }
+                {
+                    let mut history = data.trade_history.write().unwrap();
+                    history.extend(processed_trades.clone());
+                }
 
+                Ok((order_id_str, processed_trades))
+            }
+            Err(e) => Err(e),
+        }
+    };
+
+    match result {
+        Ok((order_id_str, processed_trades)) => {
+            publish_orderbook(&data, &token_id);
+            publish_market_orderbooks_for_token(&data, &token_id);
             HttpResponse::Ok().json(OrderResponse {
                 success: true,
                 order_id: Some(order_id_str),
@@ -526,19 +656,8 @@ async fn get_orderbook(
 ) -> HttpResponse {
     let token_id = path.into_inner();
     let order_books = data.order_books.read().unwrap();
-
-    if let Some(book) = order_books.get(&token_id) {
-        let snapshot = book.create_snapshot(20);
-        let bids = snapshot.bids.iter().map(|l| PriceLevel {
-            price: l.price.to_string(), quantity: l.visible_quantity.to_string(), order_count: l.order_count as u32
-        }).collect();
-        let asks = snapshot.asks.iter().map(|l| PriceLevel {
-            price: l.price.to_string(), quantity: l.visible_quantity.to_string(), order_count: l.order_count as u32
-        }).collect();
-        HttpResponse::Ok().json(OrderBookState { token_id, bids, asks })
-    } else {
-        HttpResponse::Ok().json(OrderBookState { token_id, bids: vec![], asks: vec![] })
-    }
+    let snapshot = build_orderbook_snapshot(&order_books, &token_id);
+    HttpResponse::Ok().json(snapshot)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -559,20 +678,31 @@ async fn cancel_order(
     };
 
     let order_id = order_id_str.parse::<OrderId>().unwrap();
-    let mut order_books = data.order_books.write().unwrap();
-    if let Some(book) = order_books.get_mut(&token_id) {
-        match book.cancel_order(order_id) {
-            Ok(_) => {
-                data.order_hash_to_id.remove(&order_hash);
-                data.order_id_to_hash.remove(&order_id_str);
-                data.order_makers.remove(&order_id_str);
-                data.orders.write().unwrap().remove(&order_hash);
-                HttpResponse::Ok().json(CancelResponse { success: true, message: "Cancelled".into() })
+    let result = {
+        let mut order_books = data.order_books.write().unwrap();
+        if let Some(book) = order_books.get_mut(&token_id) {
+            match book.cancel_order(order_id) {
+                Ok(_) => {
+                    data.order_hash_to_id.remove(&order_hash);
+                    data.order_id_to_hash.remove(&order_id_str);
+                    data.order_makers.remove(&order_id_str);
+                    data.orders.write().unwrap().remove(&order_hash);
+                    Ok(())
+                }
+                Err(e) => Err(format!("{:?}", e)),
             }
-            Err(e) => HttpResponse::BadRequest().json(CancelResponse { success: false, message: format!("{:?}", e) }),
+        } else {
+            Err("No book".into())
         }
-    } else {
-        HttpResponse::NotFound().json(CancelResponse { success: false, message: "No book".into() })
+    };
+
+    match result {
+        Ok(_) => {
+            publish_orderbook(&data, &token_id);
+            publish_market_orderbooks_for_token(&data, &token_id);
+            HttpResponse::Ok().json(CancelResponse { success: true, message: "Cancelled".into() })
+        }
+        Err(e) => HttpResponse::BadRequest().json(CancelResponse { success: false, message: e }),
     }
 }
 
@@ -601,6 +731,8 @@ async fn main() -> std::io::Result<()> {
     tracing::subscriber::set_global_default(subscriber).ok();
 
     info!("Starting PolyBook Rust CLOB on port 3030...");
+    info!("Websockets enabled at /ws/orderbook/{{token_id}}");
+    info!("Websockets enabled at /ws/orderbook/market/{{market_id}}");
 
     let (tx, rx) = tokio::sync::mpsc::channel(100);
     let state = Arc::new(AppState::new(tx));
@@ -616,6 +748,9 @@ async fn main() -> std::io::Result<()> {
             .route("/order/cancel", web::post().to(cancel_order))
             .route("/order/{order_hash}", web::get().to(get_order))
             .route("/orderbook/{token_id}", web::get().to(get_orderbook))
+            .route("/orderbook/market/{market_id}", web::get().to(api_market::get_market_orderbook))
+            .route("/ws/orderbook/{token_id}", web::get().to(orderbook_ws))
+            .route("/ws/orderbook/market/{market_id}", web::get().to(api_market::market_orderbook_ws))
             .route("/trades", web::get().to(get_trades))
             // Token Operations
             .route("/mint-dummy", web::post().to(api_token::mint_dummy))
