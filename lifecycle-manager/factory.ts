@@ -210,19 +210,16 @@ export async function createNextMarket() {
     console.log(`Question ID: ${questionID}`);
     console.log(`Condition ID: ${conditionID}`);
 
-    console.log("Waiting for confirmation...");
-    await new Promise(r => setTimeout(r, 10000));
-
-    // 3. Import to CLOB
-    console.log("🧮 Calculating Token IDs for CLOB Import...");
-    const parentCollectionId = "0x0000000000000000000000000000000000000000000000000000000000000000";
-
+    // Ensure condition is prepared (idempotent-ish check)
+    console.log("🛠️ Ensuring Condition is Prepared...");
+    // CTF_ADDRESS is already declared at the top level/scope if moved correctly
+    // or we use the one from factory.ts scope.
+    // However, in previous steps I might have messed up scopes.
+    // Let's use the env var directly or the top-level constant if available.
+    // Safe lookup:
     const CTF_ADDRESS = getAddress(process.env.CTF_ADDRESS || "0x41eB51a330c937B9c221D33037F7776716887c21");
-    const USDC_ADDRESS = getAddress(process.env.USDC_ADDRESS || "0x9e11B2412Ea321FFb3C2f4647812C78aAA055a47");
-
-    const CTF_ABI = parseAbi([
-        "function getCollectionId(bytes32 parentCollectionId, bytes32 conditionId, uint256 indexSet) external view returns (bytes32)",
-        "function getPositionId(address collateralToken, bytes32 collectionId) external pure returns (uint256)"
+    const CTF_PREPARE_ABI = parseAbi([
+        "function prepareCondition(address oracle, bytes32 questionId, uint256 outcomeSlotCount) external"
     ]);
 
     const publicClient = createPublicClient({
@@ -230,21 +227,59 @@ export async function createNextMarket() {
         transport: fallback(RPC_URL.split(',').map(url => http(url.trim())))
     });
 
+    try {
+        const prepTx = await wallet.writeContract({
+            address: CTF_ADDRESS,
+            abi: CTF_PREPARE_ABI,
+            functionName: 'prepareCondition',
+            args: [ADAPTER_ADDRESS, questionID, 2n]
+        });
+        console.log(`✅ Prepare Condition Tx: ${prepTx}`);
+        await publicClient.waitForTransactionReceipt({ hash: prepTx });
+        console.log("✅ Condition Prepared!");
+    } catch (e: any) {
+        const msg = e.shortMessage || e.message || "";
+        if (msg.includes("condition already prepared") || msg.includes("Condition already prepared")) {
+            console.log("⚠️ Condition already prepared.");
+        } else {
+            console.log("⚠️ Prepare Condition failed (might be fine if initialized):", msg);
+        }
+    }
+
+    console.log("Waiting for confirmation...");
+    await new Promise(r => setTimeout(r, 1000));
+
+    // 3. Import to CLOB
+    console.log("🧮 Calculating Token IDs for CLOB Import...");
+    const parentCollectionId = "0x0000000000000000000000000000000000000000000000000000000000000000";
+
+    const USDC_ADDRESS = getAddress(process.env.USDC_ADDRESS || "0x9e11B2412Ea321FFb3C2f4647812C78aAA055a47");
+
+    // Use the CTF_ADDRESS declared above (safe lookup from env)
+    // const CTF_ADDRESS = ... (removed strict redeclaration to fallback to top-scoped or env)
+    // Ensure we use the correct one
+    const ctfAddrForImport = getAddress(process.env.CTF_ADDRESS || "0x41eB51a330c937B9c221D33037F7776716887c21");
+
+    const CTF_ABI = parseAbi([
+        "function getCollectionId(bytes32 parentCollectionId, bytes32 conditionId, uint256 indexSet) external view returns (bytes32)",
+        "function getPositionId(address collateralToken, bytes32 collectionId) external pure returns (uint256)"
+    ]);
+
     const collectionId1 = await publicClient.readContract({
-        address: CTF_ADDRESS, abi: CTF_ABI, functionName: 'getCollectionId',
+        address: ctfAddrForImport, abi: CTF_ABI, functionName: 'getCollectionId',
         args: [parentCollectionId, conditionID, 1n]
     });
     const collectionId2 = await publicClient.readContract({
-        address: CTF_ADDRESS, abi: CTF_ABI, functionName: 'getCollectionId',
+        address: ctfAddrForImport, abi: CTF_ABI, functionName: 'getCollectionId',
         args: [parentCollectionId, conditionID, 2n]
     });
 
     const noTokenId = await publicClient.readContract({
-        address: CTF_ADDRESS, abi: CTF_ABI, functionName: 'getPositionId',
+        address: ctfAddrForImport, abi: CTF_ABI, functionName: 'getPositionId',
         args: [USDC_ADDRESS, collectionId1]
     });
     const yesTokenId = await publicClient.readContract({
-        address: CTF_ADDRESS, abi: CTF_ABI, functionName: 'getPositionId',
+        address: ctfAddrForImport, abi: CTF_ABI, functionName: 'getPositionId',
         args: [USDC_ADDRESS, collectionId2]
     });
 

@@ -43,11 +43,13 @@ async function checkAndResolveMarkets(activeMarkets: any[]) {
 
     const now = Math.floor(Date.now() / 1000);
 
+    const MARKET_DURATION = parseInt(process.env.MARKET_DURATION_SECONDS || "300");
+
     for (const market of activeMarkets) {
         const match = market.slug.match(/(\d+)$/);
         if (match) {
             const startTimestamp = parseInt(match[1]);
-            const expiry = startTimestamp + 300; // Fixed 5 min duration
+            const expiry = startTimestamp + MARKET_DURATION;
             if (now > expiry) {
                 console.log(`⏰ Market ${market.slug} Expired! Triggering Resolution...`);
                 let shouldUpdateClob = false;
@@ -88,6 +90,8 @@ async function runLifecycle() {
     // 1. Start the Event Syncer (Background)
     await startSyncer();
 
+    const MARKET_DURATION = parseInt(process.env.MARKET_DURATION_SECONDS || "300");
+
     // 2. Main Rotation Loop
     while (true) {
         try {
@@ -102,7 +106,7 @@ async function runLifecycle() {
                 const match = m.slug.match(/(\d+)$/);
                 if (!match) return false;
                 const startTimestamp = parseInt(match[1]);
-                const expiry = startTimestamp + 300;
+                const expiry = startTimestamp + MARKET_DURATION;
                 return expiry > now;
             });
 
