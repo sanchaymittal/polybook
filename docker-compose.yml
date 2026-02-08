@@ -6,7 +6,7 @@ services:
     ports:
       - "3030:3030"
     environment:
-      - RPC_URL=${RPC_URL}
+      - RPC_URL=https://rpc.testnet.arc.network,https://rpc.blockdaemon.testnet.arc.network,https://rpc.drpc.testnet.arc.network,https://rpc.quicknode.testnet.arc.network
       - CHAIN_ID=5042002
       - DEPLOYER_PRIVATE_KEY=${DEPLOYER_PRIVATE_KEY}
       - USDC_ADDRESS=${USDC_ADDRESS:-0x9e11B2412Ea321FFb3C2f4647812C78aAA055a47}
@@ -24,7 +24,7 @@ services:
       - clob
     environment:
       - CLOB_API_URL=http://clob:3030
-      - RPC_URL=${RPC_URL}
+      - RPC_URL=https://rpc.testnet.arc.network,https://rpc.blockdaemon.testnet.arc.network,https://rpc.drpc.testnet.arc.network,https://rpc.quicknode.testnet.arc.network
       - CHAIN_ID=5042002
       - ADAPTER_ADDRESS=${ADAPTER_ADDRESS:-0x81Ca8cAfEb16b88955D22F229aAD4c1b89a576d4}
       - CTF_ADDRESS=${CTF_ADDRESS:-0x41eB51a330c937B9c221D33037F7776716887c21}
@@ -43,7 +43,7 @@ services:
       - clob
     environment:
       - CLOB_API_URL=http://clob:3030
-      - RPC_URL=${RPC_URL}
+      - RPC_URL=https://rpc.testnet.arc.network,https://rpc.blockdaemon.testnet.arc.network,https://rpc.drpc.testnet.arc.network,https://rpc.quicknode.testnet.arc.network
       - MM_PRIVATE_KEY=${MM_PRIVATE_KEY}
       - MM_ADDRESS=${MM_ADDRESS}
       - USDC_ADDRESS=${USDC_ADDRESS:-0x9e11B2412Ea321FFb3C2f4647812C78aAA055a47}
@@ -51,34 +51,36 @@ services:
       - EXCHANGE_ADDRESS=${EXCHANGE_ADDRESS:-0xde94c82340142d919089978286a86c61d934ba31}
       - CHAIN_ID=5042002
       - SEED_MARKET=true
-      - SEED_AMOUNT=1000000 # 1 USDC (6 decimals)
-      - SPREAD_BPS=200
-      - ORDER_SIZE=50000000
+      - SEED_AMOUNT=500000000 # 500 USDC (6 decimals)
+      - SPREAD_BPS=50
+      - ORDER_SIZE=5000000 # 5 USDC
       - MAX_INVENTORY=500000000
-      - QUOTE_INTERVAL_MS=5000
+      - QUOTE_INTERVAL_MS=500
       - FAIR_PRICE=0.5
+      - USE_YELLOW=false
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
-#   mm-taker:
-#     build:
-#       context: ./mm-gateway
-#       dockerfile: Dockerfile
-#     depends_on:
-#       - clob
-#     environment:
-#       - CLOB_API_URL=http://clob:3030
-#       - RPC_URL=https://rpc.testnet.arc.network,https://rpc.blockdaemon.testnet.arc.network,https://rpc.drpc.testnet.arc.network,https://rpc.quicknode.testnet.arc.network
-#       - MM_PRIVATE_KEY=0x92db14e403d8351233897f895870f02d70589c8a82fe81c7ff2099395213608d # Account 5 (Taker/Other MM)
-#       - MM_ADDRESS=0xa8d93Ad5Df49FA95ccE48261932b08eC3708DaF5
-#       - USDC_ADDRESS=${USDC_ADDRESS:-0x5fbdb2315678afecb367f032d93f642f64180aa3}
-#       - CTF_ADDRESS=${CTF_ADDRESS:-0x41eB51a330c937B9c221D33037F7776716887c21}
-#       - EXCHANGE_ADDRESS=${EXCHANGE_ADDRESS:-0xde94c82340142d919089978286a86c61d934ba31}
-#       - CHAIN_ID=5042002
-#       - SPREAD_BPS=150
-#       - ORDER_SIZE=50000000
-#       - MAX_INVENTORY=500000000
-#       - QUOTE_INTERVAL_MS=3000
-#       - FAIR_PRICE=0.55
-#     extra_hosts:
-#       - "host.docker.internal:host-gateway"
+  mm-taker:
+    build:
+      context: ./mm-gateway
+      dockerfile: Dockerfile
+    depends_on:
+      - clob
+    environment:
+      - CLOB_API_URL=http://clob:3030
+      - RPC_URL=https://rpc.testnet.arc.network,https://rpc.blockdaemon.testnet.arc.network,https://rpc.drpc.testnet.arc.network,https://rpc.quicknode.testnet.arc.network
+      - MM_PRIVATE_KEY=0x92db14e403d8351233897f895870f02d70589c8a82fe81c7ff2099395213608d # Account 5 (Taker/Other MM)
+      - MM_ADDRESS=0xa8d93Ad5Df49FA95ccE48261932b08eC3708DaF5
+      - USDC_ADDRESS=${USDC_ADDRESS:-0x9e11B2412Ea321FFb3C2f4647812C78aAA055a47}
+      - CTF_ADDRESS=${CTF_ADDRESS:-0x41eB51a330c937B9c221D33037F7776716887c21}
+      - EXCHANGE_ADDRESS=${EXCHANGE_ADDRESS:-0xde94c82340142d919089978286a86c61d934ba31}
+      - CHAIN_ID=5042002
+      - SPREAD_BPS=40
+      - ORDER_SIZE=5000000 # 5 USDC
+      - MAX_INVENTORY=500000000
+      - QUOTE_INTERVAL_MS=800
+      - FAIR_PRICE=0.55
+      - USE_YELLOW=false
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
