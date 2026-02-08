@@ -24,7 +24,7 @@ flowchart LR
     Trader[Trader / Agent / Script] -->|REST + WS| CLOB[Rust CLOB<br/>:3030]
     MM[MM Gateway] -->|Quotes + Orders| CLOB
     Life[Lifecycle Manager] -->|Create/Resolve| CLOB
-    CLOB -->|matchOrders()| Chain[CTF + Exchange<br/>Arc Testnet]
+    CLOB -->|matchOrders()| Chain["CTF + Exchange<br/>Arc Testnet"]
     Life -->|Stork init + resolve| Chain
     Stork[Stork Oracle] -->|Signed price updates| Life
     Yellow[Yellow Server] -.->|NitroLite auth/session| YellowNet[Yellow Network]
@@ -105,7 +105,7 @@ flowchart TD
     Trader[Trader / Agent] -->|POST /order| CLOB[Rust CLOB]
     Trader -->|GET /orderbook or WS| CLOB
     CLOB --> Match[Match in orderbook]
-    Match --> Relay[Relay matchOrders() to chain]
+    Match --> Relay["Relay matchOrders() to chain"]
     Relay --> Confirm[Tx mined]
 ```
 
@@ -115,7 +115,7 @@ flowchart TD
 sequenceDiagram
     participant Life as Lifecycle Manager
     participant Stork as Stork Oracle
-    participant Chain as Chain (CTF + Adapter)
+    participant Chain as "Chain (CTF + Adapter)"
     participant CLOB as Rust CLOB
 
     Life->>Stork: Fetch opening price update
