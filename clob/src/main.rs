@@ -435,9 +435,10 @@ async fn relay_worker(mut rx: tokio::sync::mpsc::Receiver<RelayCommand>) {
                 let contract = ICTFExchange::new(exchange_addr, provider.clone());
                 
                 match contract.matchOrders(sol_taker, sol_makers, taker_fill_amount, maker_fill_amounts)
+                    .gas_price(10_000_000_000) // 10 Gwei
                     .send().await {
                         Ok(_) => {
-                            info!("[Relay] Match submitted successfully");
+                            info!("[Relay] Match submitted successfully (Gas: 10 Gwei)");
                         },
                         Err(e) => {
                             info!("[Relay] Match execution failed: {:?}", e);
