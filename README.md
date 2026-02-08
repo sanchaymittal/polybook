@@ -21,11 +21,11 @@ If you don't already have an agent, Polybook supports instant agent creation via
 
 ```mermaid
 flowchart LR
-    Trader[Trader / Agent / Script] -->|REST + WS| CLOB[Rust CLOB<br/>:3030]
-    MM[MM Gateway] -->|Quotes + Orders| CLOB
+    Trader[Trader / Agent / Script] -->|REST and WS| CLOB[Rust CLOB<br/>:3030]
+    MM[MM Gateway] -->|Quotes and Orders| CLOB
     Life[Lifecycle Manager] -->|Create/Resolve| CLOB
-    CLOB -->|matchOrders()| Chain["CTF + Exchange<br/>Arc Testnet"]
-    Life -->|Stork init + resolve| Chain
+    CLOB -->|matchOrders| Chain[CTF and Exchange<br/>Arc Testnet]
+    Life -->|Stork init and resolve| Chain
     Stork[Stork Oracle] -->|Signed price updates| Life
     Yellow[Yellow Server] -.->|NitroLite auth/session| YellowNet[Yellow Network]
     Trader -.->|Optional NitroLite auth| Yellow
@@ -223,13 +223,11 @@ cd yellow-server && npx ts-node src/index.ts
 
 Polybook includes a suite of command-line tools in the `scripts/` directory for interacting with markets, orderbooks, and testing the system.
 
-````carousel
-![Orderbook WebSocket CLI](assets/Screenshot 2026-02-08 at 9.16.09 PM.png)
-<!-- slide -->
-![Market Interaction CLI](assets/Screenshot 2026-02-08 at 9.16.27 PM.png)
-<!-- slide -->
-![Trading CLI](assets/Screenshot 2026-02-08 at 9.24.35 PM.png)
-````
+![Orderbook WebSocket CLI](assets/Screenshot%202026-02-08%20at%209.16.09%20PM.png)
+
+![Market Interaction CLI](assets/Screenshot%202026-02-08%20at%209.16.27%20PM.png)
+
+![Trading CLI](assets/Screenshot%202026-02-08%20at%209.24.35%20PM.png)
 
 **Available Scripts:**
 - `orderbook_ws_cli.ts` - Real-time orderbook streaming via WebSocket
