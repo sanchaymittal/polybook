@@ -169,7 +169,8 @@ export async function createNextMarket() {
                 description,
                 storkData  // Stork signed price data
             ],
-            value: storkFee  // Send fee for Stork update
+            value: storkFee,  // Send fee for Stork update
+            gasPrice: 10000000000n // 10 Gwei
         });
         console.log(`✅ Transaction Sent: ${tx}`);
 
@@ -179,7 +180,7 @@ export async function createNextMarket() {
             chain: ARC_TESTNET,
             transport: fallback(RPC_URL.split(',').map(url => http(url.trim())))
         });
-        const receipt = await publicClient.waitForTransactionReceipt({ hash: tx });
+        const receipt = await publicClient.waitForTransactionReceipt({ hash: tx, timeout: 60_000 });
         if (receipt.status === 'reverted') {
             console.error("❌ Transaction Reverted!", receipt);
             process.exit(1);
@@ -232,10 +233,15 @@ export async function createNextMarket() {
             address: CTF_ADDRESS,
             abi: CTF_PREPARE_ABI,
             functionName: 'prepareCondition',
-            args: [ADAPTER_ADDRESS, questionID, 2n]
+            args: [ADAPTER_ADDRESS, questionID, 2n],
+            gasPrice: 10000000000n // 10 Gwei
         });
         console.log(`✅ Prepare Condition Tx: ${prepTx}`);
-        await publicClient.waitForTransactionReceipt({ hash: prepTx });
+        const prepReceipt = await publicClient.waitForTransactionReceipt({ hash: prepTx, timeout: 60_000 });
+        if (prepReceipt.status === 'reverted') {
+            console.error("❌ Prepare Condition Transaction Reverted!", prepReceipt);
+            process.exit(1);
+        }
         console.log("✅ Condition Prepared!");
     } catch (e: any) {
         const msg = e.shortMessage || e.message || "";
@@ -295,10 +301,11 @@ export async function createNextMarket() {
             address: EXCHANGE_ADDRESS,
             abi: EXCHANGE_ABI,
             functionName: 'registerToken',
-            args: [yesTokenId, noTokenId, conditionID]
+            args: [yesTokenId, noTokenId, conditionID],
+            gasPrice: 10000000000n // 10 Gwei
         });
         console.log(`✅ Token Registration Tx: ${regTx}`);
-        await publicClient.waitForTransactionReceipt({ hash: regTx });
+        await publicClient.waitForTransactionReceipt({ hash: regTx, timeout: 60_000 });
         console.log("✅ Tokens Registered on Exchange!");
     } catch (e: any) {
         const msg = e.shortMessage || e.message || "";
