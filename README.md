@@ -219,6 +219,26 @@ cd yellow-server && npx ts-node src/index.ts
 
 ---
 
+## CLI Tools
+
+Polybook includes a suite of command-line tools in the `scripts/` directory for interacting with markets, orderbooks, and testing the system.
+
+````carousel
+![Orderbook WebSocket CLI](assets/Screenshot 2026-02-08 at 9.16.09 PM.png)
+<!-- slide -->
+![Market Interaction CLI](assets/Screenshot 2026-02-08 at 9.16.27 PM.png)
+<!-- slide -->
+![Trading CLI](assets/Screenshot 2026-02-08 at 9.24.35 PM.png)
+````
+
+**Available Scripts:**
+- `orderbook_ws_cli.ts` - Real-time orderbook streaming via WebSocket
+- `market_cli.ts` - Market creation and management
+- `trade_cli.ts` - Order submission and trade execution
+- `e2e-full.ts` - End-to-end system testing
+
+---
+
 ## Contract Addresses (Arc Testnet)
 
 | Contract | Address | Explorer |
