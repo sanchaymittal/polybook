@@ -24,7 +24,7 @@ import {
 } from '@erc7824/nitrolite';
 import type { RPCAppDefinition, RPCAppSessionAllocation } from '@erc7824/nitrolite';
 
-config();
+config({ path: 'mm-gateway/.env.maker' });
 
 const USE_YELLOW = process.env.USE_YELLOW === 'true';
 const YELLOW_WS_URL = process.env.YELLOW_WS_URL;
