@@ -2,14 +2,20 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use actix_web_actors::ws;
 use actix::prelude::*;
 use serde::{Deserialize, Serialize};
+use serde::de::{self, Deserializer};
 use alloy::sol;
-use alloy::primitives::{Address, U256, FixedBytes, Keccak256};
+use alloy::primitives::{keccak256, Address, B256, U256, FixedBytes, Keccak256};
 use alloy::network::EthereumWallet;
 use alloy::providers::ProviderBuilder;
 use alloy::signers::local::PrivateKeySigner;
+use alloy::signers::Signer;
+use alloy_sol_types::SolStruct;
 use tracing::{info, error};
 use std::sync::Arc;
-use crate::{AppState, OrderBookState};
+use std::time::{SystemTime, UNIX_EPOCH};
+use crate::{AppState, OrderBookState, OrderRequest};
+use crate::api_token::MintRequest;
+use crate::submit_order;
 use tokio::sync::broadcast;
 
 // --- Data Structures ---
@@ -75,6 +81,268 @@ pub struct GetMarketsResponse {
 #[derive(Deserialize)]
 pub struct GetMarketsQuery {
     pub status: Option<String>,
+}
+
+// --- Simple Buy API ---
+
+#[derive(Debug, Deserialize)]
+pub struct SimpleBuyRequest {
+    #[serde(deserialize_with = "deserialize_decimal")]
+    pub shares: f64,
+    #[serde(deserialize_with = "deserialize_decimal")]
+    pub price: f64,
+    pub private_key: Option<String>,
+}
+
+fn deserialize_decimal<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Number(n) => n
+            .as_f64()
+            .ok_or_else(|| de::Error::custom("invalid number")),
+        serde_json::Value::String(s) => s
+            .parse::<f64>()
+            .map_err(|_| de::Error::custom("invalid decimal string")),
+        _ => Err(de::Error::custom("expected number or string")),
+    }
+}
+
+enum SimpleSide {
+    Yes,
+    No,
+}
+
+const ACTIVE_SLUG_PREFIX: &str = "btc-up-and-down-5min-";
+
+fn extract_start_ts(slug: &str) -> Option<u64> {
+    slug.rsplit('-').next()?.parse::<u64>().ok()
+}
+
+fn find_active_rotation_market(state: &AppState) -> Option<MarketMetadata> {
+    let mut best: Option<(u64, MarketMetadata)> = None;
+    for m in state.markets.iter() {
+        let market = m.value();
+        if !market.status.eq_ignore_ascii_case("ACTIVE") {
+            continue;
+        }
+        if !market.slug.starts_with(ACTIVE_SLUG_PREFIX) {
+            continue;
+        }
+        let ts = extract_start_ts(&market.slug).unwrap_or(0);
+        match &best {
+            Some((best_ts, _)) if ts <= *best_ts => {}
+            _ => best = Some((ts, market.clone())),
+        }
+    }
+    best.map(|(_, m)| m)
+}
+
+fn scale_price(value: f64) -> Result<u64, String> {
+    if !value.is_finite() {
+        return Err("price must be a finite number".into());
+    }
+    if value <= 0.0 || value >= 1.0 {
+        return Err("price must be between 0 and 1 (exclusive)".into());
+    }
+    let scaled = (value * 1_000_000.0).round();
+    if scaled <= 0.0 {
+        return Err("price too small".into());
+    }
+    Ok(scaled as u64)
+}
+
+fn scale_shares(value: f64) -> Result<u64, String> {
+    if !value.is_finite() {
+        return Err("shares must be a finite number".into());
+    }
+    if value <= 0.0 {
+        return Err("shares must be greater than 0".into());
+    }
+    let scaled = (value * 1_000_000.0).round();
+    if scaled <= 0.0 {
+        return Err("shares too small".into());
+    }
+    Ok(scaled as u64)
+}
+
+sol! {
+    struct Order {
+        uint256 salt;
+        address maker;
+        address signer;
+        address taker;
+        uint256 tokenId;
+        uint256 makerAmount;
+        uint256 takerAmount;
+        uint256 expiration;
+        uint256 nonce;
+        uint256 feeRateBps;
+        uint8 side;
+        uint8 signatureType;
+    }
+}
+
+async fn build_signed_buy_order(
+    signer: &PrivateKeySigner,
+    token_id: &str,
+    price: u64,
+    quantity: u64,
+    chain_id: u64,
+    exchange_addr: Address,
+) -> Result<OrderRequest, String> {
+    let maker = signer.address();
+    let taker = Address::ZERO;
+    let token_id_u256 = U256::from_str_radix(token_id, 10)
+        .map_err(|e| format!("Invalid token ID: {}", e))?;
+    let salt = U256::from(rand::random::<u128>());
+
+    let usdc_amount = (price as u128 * quantity as u128) / 1_000_000u128;
+    let maker_amount = U256::from(usdc_amount);
+    let taker_amount = U256::from(quantity);
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "System time error".to_string())?
+        .as_secs();
+    let expiration = U256::from(now + 3600);
+
+    let order = Order {
+        salt,
+        maker,
+        signer: maker,
+        taker,
+        tokenId: token_id_u256,
+        makerAmount: maker_amount,
+        takerAmount: taker_amount,
+        expiration,
+        nonce: U256::ZERO,
+        feeRateBps: U256::ZERO,
+        side: 0,
+        signatureType: 0,
+    };
+
+    let struct_hash = order.eip712_hash_struct();
+    let domain_sep = crate::get_domain_separator(chain_id, exchange_addr);
+
+    let mut encoded = Vec::new();
+    encoded.extend_from_slice(b"\x19\x01");
+    encoded.extend_from_slice(domain_sep.as_slice());
+    encoded.extend_from_slice(struct_hash.as_slice());
+    let typed_data_hash: B256 = keccak256(&encoded);
+
+    let signature = signer
+        .sign_hash(&typed_data_hash)
+        .await
+        .map_err(|e| format!("Signing failed: {}", e))?;
+
+    let sig_hex = format!("0x{}", hex::encode(signature.as_bytes()));
+    let order_hash = format!("0x{}", hex::encode(typed_data_hash.as_slice()));
+
+    Ok(OrderRequest {
+        maker: format!("{:?}", maker),
+        token_id: token_id.to_string(),
+        side: "BUY".to_string(),
+        price: price.to_string(),
+        quantity: quantity.to_string(),
+        order_hash,
+        salt: salt.to_string(),
+        signer: format!("{:?}", maker),
+        taker: format!("{:?}", taker),
+        maker_amount: maker_amount.to_string(),
+        taker_amount: taker_amount.to_string(),
+        expiration: expiration.to_string(),
+        nonce: "0".to_string(),
+        fee_rate_bps: "0".to_string(),
+        signature_type: 0,
+        signature: sig_hex,
+    })
+}
+
+async fn simple_buy(
+    data: web::Data<Arc<AppState>>,
+    req: SimpleBuyRequest,
+    side: SimpleSide,
+) -> HttpResponse {
+    let market = match find_active_rotation_market(&data) {
+        Some(m) => m,
+        None => {
+            return HttpResponse::NotFound()
+                .json(serde_json::json!({ "error": "No active btc-up-and-down-5min market found" }))
+        }
+    };
+
+    let price = match scale_price(req.price) {
+        Ok(v) => v,
+        Err(e) => return HttpResponse::BadRequest().json(serde_json::json!({ "error": e })),
+    };
+    let shares = match scale_shares(req.shares) {
+        Ok(v) => v,
+        Err(e) => return HttpResponse::BadRequest().json(serde_json::json!({ "error": e })),
+    };
+
+    let signer = match req.private_key {
+        Some(pk) => pk.parse::<PrivateKeySigner>().map_err(|e| format!("Invalid private key: {}", e)),
+        None => Ok(PrivateKeySigner::random()),
+    };
+    let signer = match signer {
+        Ok(s) => s,
+        Err(e) => return HttpResponse::BadRequest().json(serde_json::json!({ "error": e })),
+    };
+
+    let token_id = match side {
+        SimpleSide::Yes => market.yes_token_id.clone(),
+        SimpleSide::No => market.no_token_id.clone(),
+    };
+
+    let chain_id = match std::env::var("CHAIN_ID") {
+        Ok(v) => v.parse::<u64>().map_err(|_| "CHAIN_ID must be a number".to_string()),
+        Err(_) => Err("CHAIN_ID not set".to_string()),
+    };
+    let chain_id = match chain_id {
+        Ok(v) => v,
+        Err(e) => return HttpResponse::BadRequest().json(serde_json::json!({ "error": e })),
+    };
+
+    let exchange_addr = std::env::var("EXCHANGE_ADDRESS")
+        .or_else(|_| std::env::var("EXCHANGE_ADDR"))
+        .map_err(|_| "EXCHANGE_ADDRESS not set".to_string())
+        .and_then(|addr| addr.parse::<Address>().map_err(|_| "Invalid EXCHANGE_ADDRESS".to_string()));
+    let exchange_addr = match exchange_addr {
+        Ok(v) => v,
+        Err(e) => return HttpResponse::BadRequest().json(serde_json::json!({ "error": e })),
+    };
+
+    let order = match build_signed_buy_order(&signer, &token_id, price, shares, chain_id, exchange_addr).await {
+        Ok(o) => o,
+        Err(e) => return HttpResponse::BadRequest().json(serde_json::json!({ "error": e })),
+    };
+
+    let _ = crate::api_token::mint_dummy(web::Json(MintRequest {
+        address: format!("{:?}", signer.address()),
+        amount: "10000000000".to_string(),
+    }))
+    .await;
+
+    submit_order(data, web::Json(order)).await
+}
+
+/// POST /market/buy-yes
+pub async fn buy_yes(
+    data: web::Data<Arc<AppState>>,
+    req: web::Json<SimpleBuyRequest>,
+) -> HttpResponse {
+    simple_buy(data, req.into_inner(), SimpleSide::Yes).await
+}
+
+/// POST /market/buy-no
+pub async fn buy_no(
+    data: web::Data<Arc<AppState>>,
+    req: web::Json<SimpleBuyRequest>,
+) -> HttpResponse {
+    simple_buy(data, req.into_inner(), SimpleSide::No).await
 }
 
 // --- Contracts ---

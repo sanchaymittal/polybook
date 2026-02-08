@@ -474,7 +474,7 @@ async fn get_order(
 }
 
 /// Submit an order to the matching engine
-async fn submit_order(
+pub(crate) async fn submit_order(
     data: web::Data<Arc<AppState>>,
     order: web::Json<OrderRequest>,
 ) -> HttpResponse {
@@ -758,6 +758,8 @@ async fn main() -> std::io::Result<()> {
             // Market Registry
             // Market Registry
             .route("/markets", web::get().to(api_market::get_markets))
+            .route("/market/buy-yes", web::post().to(api_market::buy_yes))
+            .route("/market/buy-no", web::post().to(api_market::buy_no))
             .route("/admin/create-market", web::post().to(api_market::create_market))
             .route("/admin/import-market", web::post().to(api_market::import_market))
             .route("/admin/update-status", web::post().to(api_market::update_market_status))
