@@ -85,13 +85,6 @@ function pickLatestRotationMarket(markets: MarketMetadata[]): MarketMetadata | n
   return withTs[0].m;
 }
 
-function formatNum(value: string, width: number): string {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return String(value).padStart(width, ' ');
-  const s = Math.trunc(n).toLocaleString('en-US');
-  return s.padStart(width, ' ');
-}
-
 function formatPriceProb(value: string): string {
   const n = Number(value);
   if (!Number.isFinite(n)) return value;
@@ -102,16 +95,47 @@ function formatPriceProb(value: string): string {
 function formatSizeHuman(value: string): string {
   const n = Number(value);
   if (!Number.isFinite(n)) return value;
-  const human = n / 1_000_000;
-  if (human >= 1000) return `${human.toFixed(0)}`;
-  if (human >= 100) return `${human.toFixed(1)}`;
-  if (human >= 10) return `${human.toFixed(2)}`;
-  return `${human.toFixed(3)}`;
+  const units = n / 1_000_000;
+  if (units >= 100) return units.toFixed(0);
+  if (units >= 10) return units.toFixed(1);
+  return units
+    .toFixed(3)
+    .replace(/\.?0+$/, '');
 }
 
 function extractStartTs(slug: string): number | null {
   const match = slug.match(/(\d+)$/);
   return match ? parseInt(match[1], 10) : null;
+}
+
+function fitLine(text: string, width: number): string {
+  const ansi = /\u001b\[[0-9;]*m/g;
+  const plain = text.replace(ansi, '');
+  if (plain.length === width) return text;
+  if (plain.length < width) return text + ' '.repeat(width - plain.length);
+  if (width <= 1) return text.slice(0, width);
+  const target = width - 1;
+  let out = '';
+  let visible = 0;
+  for (let i = 0; i < text.length && visible < target; i += 1) {
+    const ch = text[i];
+    if (ch === '\u001b') {
+      const match = text.slice(i).match(/^\u001b\[[0-9;]*m/);
+      if (match) {
+        out += match[0];
+        i += match[0].length - 1;
+        continue;
+      }
+    }
+    out += ch;
+    visible += 1;
+  }
+  return `${out}…`;
+}
+
+function terminalWidth(): number {
+  const w = process.stdout.columns || 110;
+  return Math.max(96, Math.min(160, w));
 }
 
 function formatUtcTime(ts: number): string {
@@ -148,17 +172,59 @@ function renderLineChart(values: number[], width: number, height: number, baseli
     return Math.max(0, Math.min(height - 1, y));
   };
 
-  if (baseline != null && Number.isFinite(baseline)) {
-    const by = toY(baseline);
-    for (let x = 0; x < width; x += 1) grid[by][x] = '─';
+  const baselineY = baseline != null && Number.isFinite(baseline) ? toY(baseline) : null;
+  if (baselineY != null) {
+    for (let x = 0; x < width; x += 1) grid[baselineY][x] = '┄';
   }
 
-  for (let x = 0; x < slice.length; x += 1) {
-    const y = toY(slice[x]);
+  const ys = slice.map((v) => toY(v));
+  for (let x = 0; x < ys.length; x += 1) {
+    const y = ys[x];
     grid[y][x] = '●';
+    if (x === 0) continue;
+    const prevY = ys[x - 1];
+    if (prevY === y) {
+      grid[y][x - 1] = '─';
+    } else {
+      const step = prevY < y ? 1 : -1;
+      for (let yy = prevY; yy !== y; yy += step) {
+        grid[yy][x - 1] = '│';
+      }
+      grid[y][x - 1] = step === 1 ? '╮' : '╰';
+    }
+  }
+
+  if (baselineY != null && ys.length > 0) {
+    const xLast = ys.length - 1;
+    const yLast = ys[xLast];
+    if (yLast !== baselineY) {
+      const step = yLast < baselineY ? 1 : -1;
+      for (let yy = yLast; yy !== baselineY; yy += step) {
+        if (grid[yy][xLast] === ' ') grid[yy][xLast] = '│';
+      }
+    }
+    grid[baselineY][xLast] = '○';
+    grid[yLast][xLast] = '◆';
   }
 
   return grid.map((row) => row.join(''));
+}
+
+function formatPastMarketLine(market: MarketMetadata): string {
+  const arrow = market.payout_result === true ? '↑' : market.payout_result === false ? '↓' : '·';
+  const ts = extractStartTs(market.slug);
+  if (!ts) return arrow;
+  const d = new Date(ts * 1000);
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const mm = String(d.getUTCMinutes()).padStart(2, '0');
+  return `${arrow} ${hh}:${mm} UTC`;
+}
+
+function formatBookCell(level: PriceLevel, isYes: boolean, priceWidth: number, sizeWidth: number): string {
+  const price = formatPriceProb(level.price).padStart(priceWidth, ' ');
+  const size = formatSizeHuman(level.quantity).padStart(sizeWidth, ' ');
+  const color = isYes ? COLOR_YES : COLOR_NO;
+  return `${color}${price} ${size}${COLOR_RESET}`;
 }
 
 async function fetchStartPrice(startTs: number): Promise<number | null> {
@@ -216,8 +282,14 @@ function renderScreen(
   recentMarkets: MarketMetadata[]
 ): void {
   console.clear();
-  console.log('Polybook');
-  console.log('');
+  const total = terminalWidth();
+  const sep = ' │ ';
+  const minRight = 42;
+  const leftWidth = Math.max(44, Math.min(Math.floor(total * 0.48), total - minRight - sep.length));
+  const rightWidth = total - leftWidth - sep.length;
+
+  console.log('POLYBOOK');
+  console.log('─'.repeat(total));
 
   const left: string[] = [];
   left.push('MARKET');
@@ -229,7 +301,7 @@ function renderScreen(
   left.push('Strike: Price at expiry');
   const startTs = extractStartTs(market.slug);
   if (startTs !== null) {
-    const expiry = (startTs as number) + MARKET_DURATION_SECONDS;
+    const expiry = startTs + MARKET_DURATION_SECONDS;
     left.push(`Expiry: ${formatUtcTime(expiry)}`);
     const nowSec = Math.floor(Date.now() / 1000);
     const remaining = expiry - nowSec;
@@ -238,8 +310,13 @@ function renderScreen(
   left.push('');
   left.push(`BTCUSD (${storkStatus})`);
   const seriesPrices = storkSeries.map((p) => p.price);
-  const chart = renderLineChart(seriesPrices, 28, 6, startPrice);
+  const chartWidth = Math.max(24, leftWidth - 2);
+  const chart = renderLineChart(seriesPrices, chartWidth, 8, startPrice);
   for (const line of chart) left.push(line);
+  left.push('─'.repeat(Math.min(chartWidth, leftWidth)));
+  if (startPrice != null) {
+    left.push('Entry ○   Current ◆');
+  }
   if (startPrice != null && currentPrice != null) {
     const delta = currentPrice - startPrice;
     const pct = startPrice ? (delta / startPrice) * 100 : 0;
@@ -248,51 +325,46 @@ function renderScreen(
     left.push(`Now:   ${currentPrice.toFixed(2)} (${sign}${delta.toFixed(2)} / ${sign}${pct.toFixed(2)}%)`);
   } else if (currentPrice != null) {
     left.push(`Now:   ${currentPrice.toFixed(2)}`);
-  } else if (startTs != null) {
-    left.push(`Start: ${startTs}`);
   }
   left.push('');
   left.push('PAST MARKETS');
-  const pastList = recentMarkets.slice(0, 4).map((m) => {
-    const arrow = m.payout_result === true ? '↑' : m.payout_result === false ? '↓' : '·';
-    const ts = extractStartTs(m.slug);
-    return `${arrow} ${ts ?? ''}`.trim();
-  });
+  const pastList = recentMarkets.slice(0, 4).map((m) => formatPastMarketLine(m));
   if (pastList.length === 0) left.push('—');
   left.push(...pastList);
 
-  const yesRows = snapshot ? formatSideRows(snapshot.yes.bids, true) : [];
-  const noRows = snapshot ? formatSideRows(snapshot.no.asks, false) : [];
-
   const right: string[] = [];
   right.push('ORDERBOOK (YES / NO)');
-  right.push(`${COLOR_YES}YES${COLOR_RESET}                 ${COLOR_NO}NO${COLOR_RESET}`);
-  right.push('Price     Size      Price     Size');
-
-  const maxRows = 12;
+  const priceWidth = 7;
+  const sizeWidth = 7;
+  const colWidth = priceWidth + 1 + sizeWidth;
+  const gap = '  ';
+  const yesLabel = `${COLOR_YES}YES${COLOR_RESET}`.padEnd(colWidth, ' ');
+  right.push(`${yesLabel}${gap}${COLOR_NO}NO${COLOR_RESET}`);
+  right.push(
+    `${'Price'.padStart(priceWidth, ' ')} ${'Size'.padStart(sizeWidth, ' ')}${gap}${'Price'.padStart(
+      priceWidth,
+      ' '
+    )} ${'Size'.padStart(sizeWidth, ' ')}`
+  );
+  const maxRows = 10;
   const yesLevels = snapshot?.yes.bids || [];
   const noLevels = snapshot?.no.asks || [];
   for (let i = 0; i < maxRows; i += 1) {
     const y = yesLevels[i];
     const n = noLevels[i];
-    const yLine = y
-      ? `${COLOR_YES}${formatPriceProb(y.price).padStart(6, ' ')}  ${formatSizeHuman(y.quantity).padStart(6, ' ')}${COLOR_RESET}`
-      : ' '.repeat(15);
-    const nLine = n
-      ? `${COLOR_NO}${formatPriceProb(n.price).padStart(6, ' ')}  ${formatSizeHuman(n.quantity).padStart(6, ' ')}${COLOR_RESET}`
-      : '';
-    right.push(`${yLine}  ${nLine}`);
+    const yLine = y ? formatBookCell(y, true, priceWidth, sizeWidth) : ' '.repeat(colWidth);
+    const nLine = n ? formatBookCell(n, false, priceWidth, sizeWidth) : '';
+    right.push(`${yLine}${gap}${nLine}`);
   }
 
-  const leftWidth = 40;
   const rows = Math.max(left.length, right.length);
   for (let i = 0; i < rows; i += 1) {
-    const l = (left[i] || '').padEnd(leftWidth, ' ');
-    const r = right[i] || '';
-    console.log(`${l} ${r}`);
+    const l = fitLine(left[i] || '', leftWidth);
+    const r = fitLine(right[i] || '', rightWidth);
+    console.log(`${l}${sep}${r}`);
   }
 
-  console.log('──────────────────────────────────────────────────────────────────────────────');
+  console.log('─'.repeat(total));
   const tradeLine = trades
     .slice(0, 5)
     .map((t) => `${formatPriceProb(t.price)} x ${formatSizeHuman(t.quantity)}`)
@@ -332,9 +404,30 @@ async function main() {
   let tradeStatus = 'loading';
   let trades: TradeResult[] = [];
   let recentMarkets: MarketMetadata[] = [];
+  let renderTimer: ReturnType<typeof setTimeout> | null = null;
 
   let clobWs: WebSocket | null = null;
   let storkWs: WebSocket | null = null;
+
+  const scheduleRender = (delay = 120) => {
+    if (renderTimer) return;
+    renderTimer = setTimeout(() => {
+      renderTimer = null;
+      renderScreen(
+        market as MarketMetadata,
+        lastSnapshot,
+        wsStatus,
+        lastUpdate,
+        storkStatus,
+        storkSeries,
+        startPrice,
+        currentPrice,
+        tradeStatus,
+        trades,
+        recentMarkets
+      );
+    }, delay);
+  };
 
   const connectMarket = async (m: MarketMetadata) => {
     market = m;
@@ -362,15 +455,18 @@ async function main() {
         const msg = JSON.parse(data.toString()) as MarketOrderBookState;
         lastSnapshot = msg;
         lastUpdate = new Date().toLocaleTimeString();
+        scheduleRender();
       } catch (_) {
         // ignore
       }
     });
     clobWs.on('error', () => {
       wsStatus = 'error';
+      scheduleRender();
     });
     clobWs.on('close', () => {
       wsStatus = 'closed';
+      scheduleRender();
     });
 
     const startTs = extractStartTs(market.slug);
@@ -413,6 +509,7 @@ async function main() {
             currentPrice = price;
             storkSeries.push({ ts: ts || Math.floor(Date.now() / 1000), price });
             while (storkSeries.length > 60) storkSeries.shift();
+            scheduleRender();
           }
         } catch (_) {
           // ignore
@@ -420,11 +517,15 @@ async function main() {
       });
       storkWs.on('error', () => {
         storkStatus = 'error';
+        scheduleRender();
       });
       storkWs.on('close', () => {
         storkStatus = 'closed';
+        scheduleRender();
       });
     }
+
+    scheduleRender(0);
   };
 
   await connectMarket(market);
@@ -435,7 +536,7 @@ async function main() {
       const byId = new Map<string, TradeResult>();
       for (const t of recent) byId.set(t.trade_id, t);
       const filtered = Array.from(byId.values())
-        .filter((t) => t.token_id === market.yes_token_id || t.token_id === market.no_token_id)
+        .filter((t) => t.token_id === market!.yes_token_id || t.token_id === market!.no_token_id)
         .sort((a, b) => {
           const ai = Number(a.trade_id.replace('trade-', '')) || 0;
           const bi = Number(b.trade_id.replace('trade-', '')) || 0;
@@ -443,8 +544,10 @@ async function main() {
         });
       trades = filtered;
       tradeStatus = `ok/${trades.length}`;
+      scheduleRender();
     } catch (_) {
       tradeStatus = 'error';
+      scheduleRender();
     }
   }, 3000);
 
@@ -462,31 +565,19 @@ async function main() {
       recentMarkets = past;
 
       if (!argMarketId) {
-        const active = all.filter((m) => m.status.toUpperCase() === 'ACTIVE');
-        const next = pickLatestRotationMarket(active);
-        if (next && next.market_id !== market.market_id) {
+        const next = pickLatestRotationMarket(rotation);
+        if (next && next.market_id !== market!.market_id) {
           await connectMarket(next);
         }
       }
+      scheduleRender();
     } catch (_) {
       // ignore
     }
   }, 5000);
 
   setInterval(() => {
-    renderScreen(
-      market as MarketMetadata,
-      lastSnapshot,
-      wsStatus,
-      lastUpdate,
-      storkStatus,
-      storkSeries,
-      startPrice,
-      currentPrice,
-      tradeStatus,
-      trades,
-      recentMarkets
-    );
+    scheduleRender();
   }, 1000);
 }
 
