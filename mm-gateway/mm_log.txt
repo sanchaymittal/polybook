@@ -1,0 +1,32 @@
+warning: fields `market_id` and `status` are never read
+  --> src/main.rs:43:5
+   |
+42 | struct MarketMetadata {
+   |        -------------- fields in this struct
+43 |     market_id: String,
+   |     ^^^^^^^^^
+...
+48 |     status: String,
+   |     ^^^^^^
+   |
+   = note: `MarketMetadata` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+[2m2026-02-08T09:50:31.712839Z[0m [32m INFO[0m [2mmm_gateway[0m[2m:[0m Running in Yellow Network mode (Market-making disabled)
+[2m2026-02-08T09:50:31.714771Z[0m [32m INFO[0m [2mmm_gateway::yellow_service[0m[2m:[0m ╔══════════════════════════════════════════════════════╗
+[2m2026-02-08T09:50:31.714799Z[0m [32m INFO[0m [2mmm_gateway::yellow_service[0m[2m:[0m ║        Yellow Network Service Starting...           ║
+[2m2026-02-08T09:50:31.714816Z[0m [32m INFO[0m [2mmm_gateway::yellow_service[0m[2m:[0m ╚══════════════════════════════════════════════════════╝
+[2m2026-02-08T09:50:31.714833Z[0m [32m INFO[0m [2mmm_gateway::yellow_service[0m[2m:[0m Configuration:
+[2m2026-02-08T09:50:31.714870Z[0m [32m INFO[0m [2mmm_gateway::yellow_service[0m[2m:[0m   Agent: 0xf87faCA915DE5A59379c65Bf2f5cc1727E7D54fC
+[2m2026-02-08T09:50:31.714934Z[0m [32m INFO[0m [2mmm_gateway::yellow_service[0m[2m:[0m   Yellow WS: wss://clearnet-sandbox.yellow.com/ws
+[2m2026-02-08T09:50:31.714948Z[0m [32m INFO[0m [2mmm_gateway::yellow_service[0m[2m:[0m   App Name: Polybook CLOB
+[2m2026-02-08T09:50:33.250689Z[0m [32m INFO[0m [2mmm_gateway::yellow_client[0m[2m:[0m Connected to Yellow Network: wss://clearnet-sandbox.yellow.com/ws
+[2m2026-02-08T09:50:33.251415Z[0m [32m INFO[0m [2mmm_gateway::yellow_client[0m[2m:[0m Authenticating with asset: ytest.usd
+[2m2026-02-08T09:50:33.251894Z[0m [32m INFO[0m [2mmm_gateway::yellow_client[0m[2m:[0m [Yellow] Received: {"res":[0,"assets",{"assets":[{"token":"0xDB9F293e3898c9E5536A3be1b0C56c89d2b32DEb","chain_id":11155111,"symbol":"ytest.usd","decimals":6},{"token":"0xDB9F293e3898c9E5536A3be1b0C56c89d2b32DEb","chain_id":59141,"symbol":"ytest.usd","decimals":6},{"token":"0xDB9F293e3898c9E5536A3be1b0C56c89d2b32DEb","chain_id":80002,"symbol":"ytest.usd","decimals":6},{"token":"0xDB9F293e3898c9E5536A3be1b0C56c89d2b32DEb","chain_id":84532,"symbol":"ytest.usd","decimals":6},{"token":"0xDB9F293e3898c9E5536A3be1b0C56c89d2b32DEb","chain_id":1449000,"symbol":"ytest.usd","decimals":6},{"token":"0x0000000000000000000000000000000000000000","chain_id":0,"symbol":"eth","decimals":18}]},1770544232979],"sig":["0x0404c7336ba1080a6ef5e88af38c24987f75ebadceef9bd34c4226f19a99c36e49905c3845cb26c788fc8c15ac85de73f118027f70ea1e64f1e80ab650c4834c1c"]}
+[2m2026-02-08T09:50:33.661654Z[0m [32m INFO[0m [2mmm_gateway::yellow_client[0m[2m:[0m [Yellow] Received: {"res":[1,"auth_challenge",{"challenge_message":"b4554e21-d3aa-48ab-af6f-3cfbd061b7cd"},1770544233395],"sig":["0x0db4d584bf12433ce0eeb7e7340367061b71d7eae44563736e7fda3e780017843f2e2ad9ef0e5592056d4ae0c2d0d84f685c776d2469f4f6d520c47e46c7058f1c"]}
+[2m2026-02-08T09:50:33.661818Z[0m [32m INFO[0m [2mmm_gateway::yellow_client[0m[2m:[0m Received challenge, signing...
+[2m2026-02-08T09:50:33.661835Z[0m [32m INFO[0m [2mmm_gateway::yellow_client[0m[2m:[0m DEBUG: Signing with local private key (Native Rust EIP-712)...
+[2m2026-02-08T09:50:34.082080Z[0m [32m INFO[0m [2mmm_gateway::yellow_client[0m[2m:[0m [Yellow] Received: {"res":[2,"auth_verify",{"address":"0xf87faCA915DE5A59379c65Bf2f5cc1727E7D54fC","jwt_token":"eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJwb2xpY3kiOnsid2FsbGV0IjoiMHhmODdmYUNBOTE1REU1QTU5Mzc5YzY1QmYyZjVjYzE3MjdFN0Q1NGZDIiwic2Vzc2lvbl9rZXkiOiIweDIyYUY2ZjQ2OEEwMjkyM2ZBY0RiNmYzNzlkZEI1M2I3MWY4ODhhQTQiLCJzY29wZSI6InBvbHlib29rLmNsb2IiLCJhcHBsaWNhdGlvbiI6IlBvbHlib29rIENMT0IiLCJhbGxvd2FuY2UiOlt7ImFzc2V0IjoieXRlc3QudXNkIiwiYW1vdW50IjoiMTAwMDAwMDAwMDAwMDAwMDAwMDAwMCJ9XSwiZXhwaXJhdGlvbiI6IjIwMjYtMDItMDhUMTA6NTA6MzNaIn0sImlzcyI6ImNsZWFybm9kZSIsImV4cCI6MTc3MDYzMDYzMywibmJmIjoxNzcwNTQ0MjMzLCJpYXQiOjE3NzA1NDQyMzN9.o2PVM2x_B5pIcftfTUvI6hKjn1rnu4NZRWLtO2QNNj9cTlImfx7c9govSPBecTum1MN5XSVJ7Nwarrs6novDUQ","session_key":"0x22aF6f468A02923fAcDb6f379ddB53b71f888aA4","success":true},1770544233815],"sig":["0xfcd56e49cf04885c5eb5ee6d86b22e7354239c656c6dd3c5e0e987596dddadde6ba0512547ab84b2145f609ce6161b5e2f2e27f26a37583e4a229e2e8b0f22241b"]}
+[2m2026-02-08T09:50:34.082228Z[0m [32m INFO[0m [2mmm_gateway::yellow_client[0m[2m:[0m Authentication successful!
+[2m2026-02-08T09:50:34.082244Z[0m [32m INFO[0m [2mmm_gateway::yellow_service[0m[2m:[0m ✅ Successfully authenticated with Yellow Network
+[2m2026-02-08T09:50:34.082251Z[0m [32m INFO[0m [2mmm_gateway::yellow_service[0m[2m:[0m 🔄 Listening for session notifications...

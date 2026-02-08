@@ -4,6 +4,7 @@
 //! Uses a simple spread-based strategy initially, with hooks for market-maker-rs integration.
 
 use tracing::info;
+use std::collections::HashMap;
 
 use crate::config::MMConfig;
 use crate::types::{Inventory, Quote, Side};
@@ -39,8 +40,8 @@ impl QuoteEngine {
         let available_usdc = inventory.available_usdc();
         let bid_cost = (bid_price as u128 * self.order_size as u128 / 1_000_000) as u64;
         if available_usdc >= bid_cost {
-            let current_yes = inventory.token_balances.get(yes_token_id).cloned().unwrap_or(0);
-            if current_yes < self.max_inventory {
+            let exposure = inventory.total_exposure(yes_token_id);
+            if exposure < self.max_inventory {
                 quotes.push(Quote {
                     side: Side::BUY,
                     token_id: yes_token_id.to_string(),
@@ -51,12 +52,14 @@ impl QuoteEngine {
                     "Generated YES BID for {}: price={} qty={}",
                     yes_token_id, bid_price, self.order_size
                 );
+            } else {
+                info!("Skipping YES BID for {}: Max inventory reached (Exposure: {} >= Max: {})", yes_token_id, exposure, self.max_inventory);
             }
         }
 
         // SELL quote (ask)
         let available_yes = inventory.available_token(yes_token_id);
-        if available_yes >= self.order_size {
+        if available_yes > 0 {
             quotes.push(Quote {
                 side: Side::SELL,
                 token_id: yes_token_id.to_string(),
@@ -85,8 +88,8 @@ impl QuoteEngine {
         let available_usdc = inventory.available_usdc();
         let bid_cost = (bid_price as u128 * self.order_size as u128 / 1_000_000) as u64;
         if available_usdc >= bid_cost {
-            let current_no = inventory.token_balances.get(no_token_id).cloned().unwrap_or(0);
-            if current_no < self.max_inventory {
+            let exposure = inventory.total_exposure(no_token_id);
+            if exposure < self.max_inventory {
                 quotes.push(Quote {
                     side: Side::BUY,
                     token_id: no_token_id.to_string(),
@@ -97,12 +100,14 @@ impl QuoteEngine {
                     "Generated NO BID for {}: price={} qty={}",
                     no_token_id, bid_price, self.order_size
                 );
+            } else {
+                info!("Skipping NO BID for {}: Max inventory reached (Exposure: {} >= Max: {})", no_token_id, exposure, self.max_inventory);
             }
         }
 
         // SELL quote (ask) for NO
         let available_no = inventory.available_token(no_token_id);
-        if available_no >= self.order_size {
+        if available_no > 0 {
             quotes.push(Quote {
                 side: Side::SELL,
                 token_id: no_token_id.to_string(),
@@ -149,8 +154,8 @@ mod tests {
             yes_balance: 50_000_000,   // 50 YES
             no_balance: 50_000_000,    // 50 NO
             usdc_reserved: 0,
-            yes_reserved: 0,
-            no_reserved: 0,
+            token_reserved: HashMap::new(),
+            pending_buy_tokens: HashMap::new(),
         }
     }
 

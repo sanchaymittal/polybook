@@ -133,6 +133,8 @@ pub struct Inventory {
     pub usdc_reserved: u64,
     /// Tokens reserved for open sell orders indexed by Token ID (scaled 1e6)
     pub token_reserved: HashMap<String, u64>,
+    /// Pending BUY tokens (from open orders) indexed by Token ID
+    pub pending_buy_tokens: HashMap<String, u64>,
 }
 
 impl Inventory {
@@ -146,6 +148,13 @@ impl Inventory {
         let balance = self.token_balances.get(token_id).cloned().unwrap_or(0);
         let reserved = self.token_reserved.get(token_id).cloned().unwrap_or(0);
         balance.saturating_sub(reserved)
+    }
+
+    /// Total exposure (Current Balance + Pending Buys)
+    pub fn total_exposure(&self, token_id: &str) -> u64 {
+        let balance = self.token_balances.get(token_id).cloned().unwrap_or(0);
+        let pending = self.pending_buy_tokens.get(token_id).cloned().unwrap_or(0);
+        balance.saturating_add(pending)
     }
 }
 

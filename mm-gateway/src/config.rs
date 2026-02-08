@@ -30,9 +30,13 @@ pub struct MMConfig {
     // Yellow Network
     pub use_yellow: bool,
     pub yellow_ws_url: String,
+    pub yellow_usdc_address: String,  // Separate USDC for Yellow Network
     pub ctf_yellow_valve_address: String,
     pub custody_address: String,
-    
+    pub yellow_app_name: String,
+    pub yellow_scope: String,
+
+
     // Strategy parameters
     pub spread_bps: u64,        // Spread in basis points (e.g., 200 = 2%)
     pub order_size: u64,        // Order size in tokens (scaled 1e6)
@@ -48,12 +52,16 @@ pub struct MMConfig {
 impl MMConfig {
     /// Load configuration from environment variables
     pub fn from_env() -> Result<Self, String> {
-        // Try local .env first, then parent directory
-        if dotenv::dotenv().is_err() {
+        // Explicitly load .env from current directory and OVERRIDE shell variables
+        let path = std::path::PathBuf::from(".env");
+        if path.exists() {
+            dotenv::from_path(&path).ok();
+        } else {
+            // Fallback to parent dir if not in CWD
             let mut path = env::current_dir().unwrap();
             path.pop();
             path.push(".env");
-            dotenv::from_path(path).ok();
+            dotenv::from_path(&path).ok();
         }
 
         Ok(Self {
@@ -85,6 +93,24 @@ impl MMConfig {
                 .expect("CHAIN_ID not set")
                 .parse()
                 .expect("CHAIN_ID must be a number"),
+
+            // Yellow Network
+            use_yellow: env::var("USE_YELLOW")
+                .unwrap_or_else(|_| "false".to_string())
+                .parse()
+                .unwrap_or(false),
+            yellow_ws_url: env::var("YELLOW_WS_URL")
+                .unwrap_or("wss://clearnet-sandbox.yellow.com/ws".to_string()),
+            yellow_usdc_address: env::var("YELLOW_USDC_ADDRESS")
+                .unwrap_or_else(|_| env::var("USDC_ADDRESS").unwrap_or_else(|_| "0x9e11B2412Ea321FFb3C2f4647812C78aAA055a47".to_string())),
+            ctf_yellow_valve_address: env::var("CTF_YELLOW_VALVE_ADDRESS")
+                .unwrap_or_else(|_| "0xF29eE886c0EEf9EDAd34dA25F3745Cda99AB5a47".to_string()),
+            custody_address: env::var("CUSTODY_ADDRESS")
+                .unwrap_or_else(|_| "0x4eA10a8ABe008ddCF7e926cFf3346d07e9d90b9f".to_string()),
+            yellow_app_name: env::var("YELLOW_APP_NAME")
+                .unwrap_or_else(|_| "Test app".to_string()),
+            yellow_scope: env::var("YELLOW_SCOPE")
+                .unwrap_or_else(|_| "test.app".to_string()),
 
             // Strategy parameters
             spread_bps: env::var("SPREAD_BPS")

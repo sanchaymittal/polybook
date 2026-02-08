@@ -8,18 +8,22 @@
 //! - EIP-712 order signing compatible with CLOB
 //! - Spread-based quote generation
 //! - Automatic re-quoting on fills
+//! - Yellow Network integration (optional)
 //!
 //! ## Usage
 //! ```bash
-//! # Set environment variables or use .env file
-//! export CLOB_URL=http://127.0.0.1:3030
-//! export RPC_URL=http://127.0.0.1:8545
+//! # Yellow Network mode
+//! export USE_YELLOW=true
+//! cargo run
+//!
+//! # Traditional market-making mode
+//! export USE_YELLOW=false
 //! cargo run
 //! ```
 
 use std::time::Duration;
 use tokio::time::sleep;
-use tracing::{error, info, warn, Level};
+use tracing::{debug, error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
 use mm_gateway::config::MMConfig;
@@ -65,25 +69,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .finish();
     tracing::subscriber::set_global_default(subscriber)?;
 
-    info!("╔══════════════════════════════════════════════════════╗");
-    info!("║           MM-Gateway Multi-Market Starting...        ║");
-    info!("╚══════════════════════════════════════════════════════╝");
-
     // Load configuration
     let config = MMConfig::from_env()?;
     config.validate()?;
+
+    // Split execution based on USE_YELLOW flag
+    if config.use_yellow {
+        // Yellow-only mode: Run dedicated Yellow service
+        info!("Running in Yellow Network mode (Market-making disabled)");
+        let signer: alloy::signers::local::PrivateKeySigner = config.agent_private_key.parse()
+            .map_err(|e| format!("Invalid private key: {}", e))?;
+        mm_gateway::yellow_service::run_yellow_service(config, signer).await
+    } else {
+        // Traditional market-making mode
+        run_market_making_service(config).await
+    }
+}
+
+/// Run traditional market-making service (no Yellow Network)
+async fn run_market_making_service(config: MMConfig) -> Result<(), Box<dyn std::error::Error>> {
+    info!("╔══════════════════════════════════════════════════════╗");
+    info!("║           MM-Gateway Multi-Market Starting...        ║");
+    info!("╚══════════════════════════════════════════════════════╝");
 
     info!("Configuration loaded:");
     info!("  Agent: {}", config.agent_address);
     info!("  CLOB: {}", config.clob_url);
     info!("  RPC: {}", config.rpc_url);
-    info!("  Spread: {} bps", config.spread_bps);
-    info!("  Order Size: {}", config.order_size);
-    info!("  Quote Interval: {}ms", config.quote_interval_ms);
-    if config.seed_market {
-        info!("  SEEDING ENABLED: {} USDC", config.seed_amount);
-    }
-
+    
     // Initialize components
     let order_signer = OrderSigner::new(&config)?;
     let mut inventory_manager = InventoryManager::new(&config)?;
@@ -96,10 +109,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         error!("CLOB is not available at {}. Exiting.", config.clob_url);
         return Err("CLOB unavailable".into());
     }
+    
     info!("CLOB connection verified");
 
-    // Main runtime loop
+    // Ensure on-chain approvals are in place
+    if let Err(e) = inventory_manager.ensure_approvals().await {
+        warn!("Initial approval check failed: {}. Continuing anyway...", e);
+    }
+
     info!("Starting multi-market quoting loop...");
+
+    // let mut last_redemption_check = 0;
 
     loop {
         // 0. Discovery: Fetch active markets
@@ -113,70 +133,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         // 0b. Discovery: Fetch RESOLVED markets for redemption
-        let resolved_markets = match fetch_markets(&config, "RESOLVED").await {
-            Ok(m) => m,
-            Err(e) => {
-                 warn!("Failed to fetch resolved markets: {}", e);
-                 vec![] // Don't block main loop if this fails
-            }
-        };
-
-        // --- REDEMPTION LOGIC ---
-        if !resolved_markets.is_empty() {
-             let mut resolved_tokens = Vec::new();
-             for m in &resolved_markets {
-                 resolved_tokens.push(m.yes_token_id.clone());
-                 resolved_tokens.push(m.no_token_id.clone());
-             }
-             
-             if let Ok(inv) = inventory_manager.sync(&resolved_tokens).await {
-                 for market in &resolved_markets {
-                     // Check if outcomes won
-                     // Outcome 0 = NO (Index Set 1)
-                     // Outcome 1 = YES (Index Set 2)
-
-                     let no_payout = match inventory_manager.get_payout_numerator(&market.condition_id, 0).await {
-                         Ok(p) => p,
-                         Err(e) => {
-                             warn!("Failed to fetch NO payout for {}: {}", market.slug, e);
-                             0
-                         }
-                     };
-                     
-                     let yes_payout = match inventory_manager.get_payout_numerator(&market.condition_id, 1).await {
-                         Ok(p) => p,
-                         Err(e) => {
-                             warn!("Failed to fetch YES payout for {}: {}", market.slug, e);
-                             0
-                         }
-                     };
-
-                     info!("Market {} Payouts: NO={}, YES={}", market.slug, no_payout, yes_payout);
-
-                     // Check YES Tokens (Index Set 2, Outcome Index 1)
-                     if yes_payout > 0 {
-                        let yes_bal = inv.token_balances.get(&market.yes_token_id).unwrap_or(&0);
-                        if *yes_bal > 0 {
-                            info!("YES WON for {}. Found {} tokens. Redeeming...", market.slug, yes_bal);
-                            if let Err(e) = inventory_manager.redeem_positions(&market.condition_id, 2).await {
-                                warn!("Failed to redeem YES tokens for {}: {}", market.slug, e);
-                            }
-                        }
-                     }
-
-                     // Check NO Tokens (Index Set 1, Outcome Index 0)
-                     if no_payout > 0 {
-                        let no_bal = inv.token_balances.get(&market.no_token_id).unwrap_or(&0);
-                        if *no_bal > 0 {
-                            info!("NO WON for {}. Found {} tokens. Redeeming...", market.slug, no_bal);
-                            if let Err(e) = inventory_manager.redeem_positions(&market.condition_id, 1).await {
-                                warn!("Failed to redeem NO tokens for {}: {}", market.slug, e);
-                            }
-                        }
-                     }
-                 }
-             }
-        }
+        /* 
+        // 0b. Discovery: Fetch RESOLVED markets for redemption (Disabled per user request)
+        // ... (redemption logic removed)
+        */
 
         if active_markets.is_empty() {
             info!("No active markets found. Waiting...");
@@ -206,20 +166,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
              }
         };
 
-        // 1.5 Auto-Seed (Split Position) if enabled and inventory is empty for a market
+        // 1.2. Auto-Refill (Hackathon Mode)
+        if inventory.usdc_balance < 5_000_000 { // Less than 5 USDC
+             info!("Low USDC balance ({}), triggering Auto-Refill...", inventory.usdc_balance);
+             if let Err(e) = orderbook_adapter.mint_dummy(&config.agent_address).await {
+                 error!("Auto-Refill failed: {}", e);
+             } else {
+                 // Wait a bit for mint to process
+                 sleep(Duration::from_secs(2)).await;
+                 continue; // Restart loop to re-sync
+             }
+        }
+
+        // 1.5 Auto-Seed (Split Position) if enabled
         if config.seed_market {
             for market in &active_markets {
                 let yes_bal = inventory.token_balances.get(&market.yes_token_id).unwrap_or(&0);
                 let no_bal = inventory.token_balances.get(&market.no_token_id).unwrap_or(&0);
 
-                // If we have negligible tokens (less than order size), we might need to seed
-                if *yes_bal < config.order_size || *no_bal < config.order_size {
-                    // Check if we have enough USDC
+                if *yes_bal == 0 && *no_bal == 0 {
                     if inventory.usdc_balance >= config.seed_amount {
                         info!("Seeding market {} with {} USDC...", market.slug, config.seed_amount);
                         match inventory_manager.ensure_inventory(&market.condition_id, config.seed_amount).await {
                             Ok(_) => info!("Seeding successful for {}", market.slug),
-                            Err(e) => warn!("Seeding failed for {}: {}", market.slug, e),
+                            Err(e) => error!("Seeding failed for {}: {}", market.slug, e),
                         }
                     } else {
                         warn!("Insufficient USDC to seed market {} (Need {}, Have {})", market.slug, config.seed_amount, inventory.usdc_balance);
@@ -242,7 +212,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(e) => warn!("Failed to poll fills: {}", e),
         }
 
-        // 3. Cancel stale orders (older than 2 minutes for faster rotation)
+        // 3. Cancel stale orders
         let stale_orders = event_listener.check_stale_orders(now_secs(), 120);
         for order_hash in stale_orders {
             info!("Cancelling stale order: {}", order_hash);
@@ -260,6 +230,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Side::BUY => {
                         let cost = (price as u128 * quantity as u128 / 1_000_000) as u64;
                         inventory_manager.release_usdc(cost);
+                        inventory_manager.release_pending_buy(&token_id, quantity);
                     }
                     Side::SELL => {
                         inventory_manager.release_token(&token_id, quantity);
@@ -268,64 +239,122 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // 4. Loop through each market and quote
+        // 4. Generate and place new quotes for each market
         for market in &active_markets {
-            let quotes = quote_engine.generate_market_quotes(&inventory, &market.yes_token_id, &market.no_token_id);
+            let _yes_bal = inventory.token_balances.get(&market.yes_token_id).unwrap_or(&0);
+            let _no_bal = inventory.token_balances.get(&market.no_token_id).unwrap_or(&0);
+
+            let quotes = quote_engine.generate_market_quotes(
+                &inventory,
+                &market.yes_token_id,
+                &market.no_token_id,
+            );
 
             for quote in quotes {
-                // Skip if we already have an order at this price/side
-                let existing = event_listener
-                    .orders_for_token(&quote.token_id)
+                let has_open = event_listener
+                    .open_orders()
                     .iter()
-                    .any(|o| o.side == quote.side && o.price == quote.price);
+                    .any(|o| o.token_id == quote.token_id && o.side == quote.side);
 
-                if existing {
+                if has_open {
+                    debug!("Skipping quote for {} (already have open order)", quote.token_id);
                     continue;
                 }
 
-                match order_signer.sign_order(&quote.token_id, quote.side, quote.price, quote.quantity).await {
-                    Ok(order_request) => {
-                        let order_hash = order_request.order_hash.clone();
-                        match orderbook_adapter.submit_order(&order_request).await {
-                            Ok(response) => {
-                                if response.success {
-                                    info!(
-                                        "Order submitted: {} {} @ {} for market {}",
-                                        quote.side.as_str(), quote.token_id, quote.price, market.slug
-                                    );
+                // Check if we have enough inventory
+                let can_reserve = match quote.side {
+                    Side::BUY => {
+                        let cost = (quote.price as u128 * quote.quantity as u128 / 1_000_000) as u64;
+                        inventory.available_usdc() >= cost
+                    }
+                    Side::SELL => {
+                        inventory.available_token(&quote.token_id) >= quote.quantity
+                    }
+                };
 
-                                    event_listener.track_order(OpenOrder {
-                                        order_hash,
-                                        token_id: quote.token_id.clone(),
-                                        side: quote.side,
-                                        price: quote.price,
-                                        quantity: quote.quantity,
-                                        filled: 0,
-                                        timestamp: now_secs(),
-                                    });
+                if !can_reserve {
+                    debug!("Insufficient inventory for quote: {:?}", quote);
+                    continue;
+                }
 
-                                    match quote.side {
-                                        Side::BUY => {
-                                            let cost = (quote.price as u128 * quote.quantity as u128 / 1_000_000) as u64;
-                                            inventory_manager.reserve_usdc(cost);
-                                        }
-                                        Side::SELL => {
-                                            inventory_manager.reserve_token(&quote.token_id, quote.quantity);
-                                        }
-                                    }
-                                } else {
-                                    warn!("Order rejected: {}", response.error.unwrap_or_default());
+                // Reserve inventory
+                match quote.side {
+                    Side::BUY => {
+                        let cost = (quote.price as u128 * quote.quantity as u128 / 1_000_000) as u64;
+                        inventory_manager.reserve_usdc(cost);
+                        inventory_manager.reserve_pending_buy(&quote.token_id, quote.quantity);
+                    }
+                    Side::SELL => {
+                        inventory_manager.reserve_token(&quote.token_id, quote.quantity);
+                    }
+                };
+
+                let signed_order = match order_signer.sign_order(
+                    &quote.token_id,
+                    quote.side,
+                    quote.price,
+                    quote.quantity,
+                ).await {
+                    Ok(order) => order,
+                    Err(e) => {
+                        warn!("Failed to sign order: {}", e);
+                        continue;
+                    }
+                };
+
+                match orderbook_adapter.submit_order(&signed_order).await {
+                    Ok(response) => {
+                        if response.success {
+                            let order_hash = signed_order.order_hash.clone();
+                            info!(
+                                "Placed {} order: {} @ {} (hash: {})",
+                                if quote.side == Side::BUY { "BUY" } else { "SELL" },
+                                quote.quantity,
+                                quote.price,
+                                order_hash
+                            );
+                            event_listener.track_order(OpenOrder {
+                                order_hash,
+                                token_id: quote.token_id.clone(),
+                                side: quote.side,
+                                price: quote.price,
+                                quantity: quote.quantity,
+                                filled: 0,
+                                timestamp: now_secs(),
+                            });
+                        } else {
+                            warn!("Order rejected: {:?}", response.error);
+                            // Release reserved inventory on rejection
+                            match quote.side {
+                                Side::BUY => {
+                                    let cost = (quote.price as u128 * quote.quantity as u128 / 1_000_000) as u64;
+                                    inventory_manager.release_usdc(cost);
+                                    inventory_manager.release_pending_buy(&quote.token_id, quote.quantity);
+                                }
+                                Side::SELL => {
+                                    inventory_manager.release_token(&quote.token_id, quote.quantity);
                                 }
                             }
-                            Err(e) => warn!("Failed to submit order: {}", e),
                         }
                     }
-                    Err(e) => error!("Failed to sign order: {}", e),
+                    Err(e) => {
+                        warn!("Failed to place order: {}", e);
+                        match quote.side {
+                            Side::BUY => {
+                                let cost = (quote.price as u128 * quote.quantity as u128 / 1_000_000) as u64;
+                                inventory_manager.release_usdc(cost);
+                                inventory_manager.release_pending_buy(&quote.token_id, quote.quantity);
+                            }
+                            Side::SELL => {
+                                inventory_manager.release_token(&quote.token_id, quote.quantity);
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        // 6. Sleep until next quote interval
+        // 5. Wait before next iteration
         sleep(Duration::from_millis(config.quote_interval_ms)).await;
     }
 }

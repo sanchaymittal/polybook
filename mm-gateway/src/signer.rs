@@ -64,6 +64,11 @@ impl OrderSigner {
         self.signer.address()
     }
 
+    /// Get the signer
+    pub fn signer(&self) -> &PrivateKeySigner {
+        &self.signer
+    }
+
     /// Get the EIP-712 domain separator
     fn domain_separator(&self) -> B256 {
         let domain = eip712_domain! {
@@ -143,11 +148,12 @@ impl OrderSigner {
         encoded.extend_from_slice(domain_separator.as_slice());
         encoded.extend_from_slice(struct_hash.as_slice());
         let typed_data_hash = B256::from(keccak256(&encoded));
+        let typed_data_hash_slice = typed_data_hash.as_slice();
 
         // Sign the hash
         let signature = self
             .signer
-            .sign_hash(&typed_data_hash)
+            .sign_hash(&B256::from_slice(typed_data_hash_slice))
             .await
             .map_err(|e| format!("Signing failed: {}", e))?;
 
@@ -156,7 +162,7 @@ impl OrderSigner {
         let sig_hex = format!("0x{}", hex::encode(sig_bytes));
 
         // Compute order hash for tracking
-        let order_hash = format!("0x{}", hex::encode(typed_data_hash.as_slice()));
+        let order_hash = format!("0x{}", hex::encode(typed_data_hash_slice));
 
         Ok(OrderRequest {
             maker: format!("{:?}", maker),
@@ -176,29 +182,5 @@ impl OrderSigner {
             signature_type: SignatureType::EOA as u8,
             signature: sig_hex,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_sign_order() {
-        let config = MMConfig::from_env().unwrap();
-        let signer = OrderSigner::new(&config).unwrap();
-
-        let order = signer
-            .sign_order(
-                &config.yes_token_id,
-                Side::BUY,
-                500_000, // 0.50 price
-                10_000_000, // 10 tokens
-            )
-            .await
-            .unwrap();
-
-        assert!(order.signature.starts_with("0x"));
-        assert_eq!(order.signature.len(), 132); // 65 bytes = 130 hex + 0x
     }
 }

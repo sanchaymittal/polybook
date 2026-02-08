@@ -156,4 +156,33 @@ impl OrderbookAdapter {
             Err(format!("Order query failed: {}", response.status()))
         }
     }
+
+    /// Mint dummy tokens for an address (Auto-Refill)
+    pub async fn mint_dummy(&self, address: &str) -> Result<(), String> {
+        info!("Requesting dummy mint for: {}", address);
+        let url = format!("{}/mint-dummy", self.base_url);
+        
+        // Send as JSON body with address and amount
+        let body = serde_json::json!({
+            "address": address,
+            "amount": "10000000000"  // 10,000 USDC (6 decimals)
+        });
+        
+        let response = self.client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Mint request failed: {}", e))?;
+
+        if response.status().is_success() {
+            info!("Mint request successful");
+            Ok(())
+        } else {
+             let status = response.status();
+             let body = response.text().await.unwrap_or_default();
+             Err(format!("Mint failed ({}): {}", status, body))
+        }
+    }
 }
