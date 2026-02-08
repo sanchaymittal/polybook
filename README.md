@@ -213,13 +213,21 @@ sequenceDiagram
 
 ---
 
-## Contract Addresses (Local Anvil)
+## Contract Addresses (Arc Testnet)
 
-| Contract | Address |
-|----------|---------|
-| Exchange | `0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc9` |
-| CTF | `0x9fe46736679d2d9a65f0992f2272de9f3c7fa6e0` |
-| USDC | `0xe7f1725e7734ce288f8367e1bb143e90bb3f0512` |
+| Contract | Address | Explorer |
+|----------|---------|----------|
+| **CTF** | `0x41eB51a330c937B9c221D33037F7776716887c21` | [View on Arc Explorer](https://testnet.arcscan.net/address/0x41eB51a330c937B9c221D33037F7776716887c21) |
+| **Exchange** | `0xde94c82340142d919089978286a86c61d934ba31` | [View on Arc Explorer](https://testnet.arcscan.net/address/0xde94c82340142d919089978286a86c61d934ba31) |
+| **Stork Adapter** | `0x81Ca8cAfEb16b88955D22F229aAD4c1b89a576d4` | [View on Arc Explorer](https://testnet.arcscan.net/address/0x81Ca8cAfEb16b88955D22F229aAD4c1b89a576d4) |
+| **CTFYellowValve** | `0xc90715e8c7e14bb6388594ca690632c183efab9a` | [View on Arc Explorer](https://testnet.arcscan.net/address/0xc90715e8c7e14bb6388594ca690632c183efab9a) |
+| **Custody (Yellow)** | `0x4eA10a8ABe008ddCF7e926cFf3346d07e9d90b9f` | [View on Arc Explorer](https://testnet.arcscan.net/address/0x4eA10a8ABe008ddCF7e926cFf3346d07e9d90b9f) |
+| **USDC (Collateral)** | `0x9e11B2412Ea321FFb3C2f4647812C78aAA055a47` | [View on Arc Explorer](https://testnet.arcscan.net/address/0x9e11B2412Ea321FFb3C2f4647812C78aAA055a47) |
+
+### Related Commits
+
+- **Polybook Integration**: [90958ea](https://github.com/sanchaymittal/polybook/commit/90958ea) - Yellow Network integration and testing utilities
+- **Nitrolite CTF Integration**: [654602d](https://github.com/erc7824/nitrolite/commit/654602d) - CTFYellowValve deployment and clearnode enhancements
 
 ---
 
