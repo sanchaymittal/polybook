@@ -210,6 +210,26 @@ function renderLineChart(values: number[], width: number, height: number, baseli
   return grid.map((row) => row.join(''));
 }
 
+function renderChartBox(lines: string[], width: number): string[] {
+  const top = `┌${'─'.repeat(width)}┐`;
+  const bottom = `└${'─'.repeat(width)}┘`;
+  const boxed = lines.map((line) => `│${line.padEnd(width, ' ')}│`);
+  return [top, ...boxed, bottom];
+}
+
+function sizeUnits(value: string | undefined): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return n / 1_000_000;
+}
+
+function makeBar(size: number, max: number, width: number): string {
+  if (width <= 0) return '';
+  if (max <= 0) return ' '.repeat(width);
+  const filled = Math.round((size / max) * width);
+  return '█'.repeat(Math.max(0, Math.min(width, filled))).padEnd(width, ' ');
+}
+
 function formatPastMarketLine(market: MarketMetadata): string {
   const arrow = market.payout_result === true ? '↑' : market.payout_result === false ? '↓' : '·';
   const ts = extractStartTs(market.slug);
@@ -220,11 +240,27 @@ function formatPastMarketLine(market: MarketMetadata): string {
   return `${arrow} ${hh}:${mm} UTC`;
 }
 
-function formatBookCell(level: PriceLevel, isYes: boolean, priceWidth: number, sizeWidth: number): string {
+function formatBookCell(
+  level: PriceLevel | undefined,
+  color: string,
+  priceWidth: number,
+  sizeWidth: number,
+  barWidth: number,
+  maxSize: number
+): string {
+  const cellWidth = priceWidth + 1 + sizeWidth + 1 + barWidth;
+  if (!level) return ' '.repeat(cellWidth);
   const price = formatPriceProb(level.price).padStart(priceWidth, ' ');
   const size = formatSizeHuman(level.quantity).padStart(sizeWidth, ' ');
-  const color = isYes ? COLOR_YES : COLOR_NO;
-  return `${color}${price} ${size}${COLOR_RESET}`;
+  const bar = makeBar(sizeUnits(level.quantity), maxSize, barWidth);
+  return `${color}${price} ${size} ${bar}${COLOR_RESET}`;
+}
+
+function headerCell(priceWidth: number, sizeWidth: number, barWidth: number): string {
+  const price = 'Price'.padStart(priceWidth, ' ');
+  const size = 'Size'.padStart(sizeWidth, ' ');
+  const bar = 'Bar'.padEnd(barWidth, ' ');
+  return `${price} ${size} ${bar}`;
 }
 
 async function fetchStartPrice(startTs: number): Promise<number | null> {
@@ -310,10 +346,10 @@ function renderScreen(
   left.push('');
   left.push(`BTCUSD (${storkStatus})`);
   const seriesPrices = storkSeries.map((p) => p.price);
-  const chartWidth = Math.max(24, leftWidth - 2);
-  const chart = renderLineChart(seriesPrices, chartWidth, 8, startPrice);
-  for (const line of chart) left.push(line);
-  left.push('─'.repeat(Math.min(chartWidth, leftWidth)));
+  const chartInnerWidth = Math.max(24, leftWidth - 4);
+  const chart = renderLineChart(seriesPrices, chartInnerWidth, 8, startPrice);
+  const chartBox = renderChartBox(chart, chartInnerWidth);
+  for (const line of chartBox) left.push(line);
   if (startPrice != null) {
     left.push('Entry ○   Current ◆');
   }
@@ -333,28 +369,43 @@ function renderScreen(
   left.push(...pastList);
 
   const right: string[] = [];
-  right.push('ORDERBOOK (YES / NO)');
+  right.push('ORDERBOOK');
   const priceWidth = 7;
-  const sizeWidth = 7;
-  const colWidth = priceWidth + 1 + sizeWidth;
+  const sizeWidth = 6;
   const gap = '  ';
-  const yesLabel = `${COLOR_YES}YES${COLOR_RESET}`.padEnd(colWidth, ' ');
-  right.push(`${yesLabel}${gap}${COLOR_NO}NO${COLOR_RESET}`);
-  right.push(
-    `${'Price'.padStart(priceWidth, ' ')} ${'Size'.padStart(sizeWidth, ' ')}${gap}${'Price'.padStart(
-      priceWidth,
-      ' '
-    )} ${'Size'.padStart(sizeWidth, ' ')}`
-  );
-  const maxRows = 10;
-  const yesLevels = snapshot?.yes.bids || [];
-  const noLevels = snapshot?.no.asks || [];
+  const baseCell = priceWidth + 1 + sizeWidth + 1;
+  const available = rightWidth - gap.length - baseCell * 2;
+  const barWidth = Math.max(4, Math.min(14, Math.floor(available / 2)));
+  const cellWidth = baseCell + barWidth;
+  const header = headerCell(priceWidth, sizeWidth, barWidth);
+
+  const upBids = snapshot?.yes.bids || [];
+  const upAsks = snapshot?.yes.asks || [];
+  const downBids = snapshot?.no.bids || [];
+  const downAsks = snapshot?.no.asks || [];
+
+  const maxUpBid = Math.max(1, ...upBids.map((l) => sizeUnits(l.quantity)));
+  const maxUpAsk = Math.max(1, ...upAsks.map((l) => sizeUnits(l.quantity)));
+  const maxDownBid = Math.max(1, ...downBids.map((l) => sizeUnits(l.quantity)));
+  const maxDownAsk = Math.max(1, ...downAsks.map((l) => sizeUnits(l.quantity)));
+
+  right.push(`${COLOR_YES}UP${COLOR_RESET}`);
+  right.push(`${'BID'.padEnd(cellWidth, ' ')}${gap}${'ASK'.padEnd(cellWidth, ' ')}`);
+  right.push(`${header}${gap}${header}`);
+  const maxRows = 6;
   for (let i = 0; i < maxRows; i += 1) {
-    const y = yesLevels[i];
-    const n = noLevels[i];
-    const yLine = y ? formatBookCell(y, true, priceWidth, sizeWidth) : ' '.repeat(colWidth);
-    const nLine = n ? formatBookCell(n, false, priceWidth, sizeWidth) : '';
-    right.push(`${yLine}${gap}${nLine}`);
+    const bid = formatBookCell(upBids[i], COLOR_YES, priceWidth, sizeWidth, barWidth, maxUpBid);
+    const ask = formatBookCell(upAsks[i], COLOR_YES, priceWidth, sizeWidth, barWidth, maxUpAsk);
+    right.push(`${bid}${gap}${ask}`);
+  }
+  right.push('');
+  right.push(`${COLOR_NO}DOWN${COLOR_RESET}`);
+  right.push(`${'BID'.padEnd(cellWidth, ' ')}${gap}${'ASK'.padEnd(cellWidth, ' ')}`);
+  right.push(`${header}${gap}${header}`);
+  for (let i = 0; i < maxRows; i += 1) {
+    const bid = formatBookCell(downBids[i], COLOR_NO, priceWidth, sizeWidth, barWidth, maxDownBid);
+    const ask = formatBookCell(downAsks[i], COLOR_NO, priceWidth, sizeWidth, barWidth, maxDownAsk);
+    right.push(`${bid}${gap}${ask}`);
   }
 
   const rows = Math.max(left.length, right.length);
