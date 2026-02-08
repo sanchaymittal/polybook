@@ -1,12 +1,10 @@
 use actix_web::{web, HttpResponse};
 use serde::{Deserialize, Serialize};
 use alloy::sol;
-use alloy::primitives::{Address, U256, FixedBytes};
+use alloy::primitives::{Address, U256};
 use alloy::network::EthereumWallet;
-use alloy::providers::{Provider, ProviderBuilder};
+use alloy::providers::{ProviderBuilder};
 use alloy::signers::local::PrivateKeySigner;
-use tracing::{info, error};
-use std::str::FromStr;
 
 // --- Contracts ---
 sol! {
@@ -70,7 +68,11 @@ pub struct TxResponse {
 
 /// POST /mint-dummy
 pub async fn mint_dummy(req: web::Json<MintRequest>) -> HttpResponse {
-    let rpc_url = std::env::var("RPC_URL").unwrap_or_else(|_| "http://127.0.0.1:8545".to_string());
+    let rpc_env = std::env::var("RPC_URL").unwrap_or_else(|_| "http://127.0.0.1:8545".to_string());
+    let rpc_urls: Vec<&str> = rpc_env.split(',').collect();
+    use rand::seq::SliceRandom;
+    let rpc_url = *rpc_urls.choose(&mut rand::thread_rng()).expect("RPC_URL must not be empty");
+
     let pk = match std::env::var("DEPLOYER_PRIVATE_KEY") {
         Ok(k) => k,
         Err(_) => return HttpResponse::InternalServerError().json(TxResponse { success: false, tx_hash: None, error: Some("Missing DEPLOYER_PRIVATE_KEY".into()) }),
@@ -95,9 +97,18 @@ pub async fn mint_dummy(req: web::Json<MintRequest>) -> HttpResponse {
 
     match contract.mint(to_addr, amount).send().await {
         Ok(builder) => {
-            let hash = builder.watch().await.unwrap();
-            HttpResponse::Ok().json(TxResponse { success: true, tx_hash: Some(hash.to_string()), error: None })
+            // Return immediately with tx hash, don't wait for confirmation
+            let tx_hash = *builder.tx_hash();
+            HttpResponse::Ok().json(TxResponse { 
+                success: true, 
+                tx_hash: Some(format!("{:?}", tx_hash)), 
+                error: None 
+            })
         }
-        Err(e) => HttpResponse::InternalServerError().json(TxResponse { success: false, tx_hash: None, error: Some(format!("{:?}", e)) })
+        Err(e) => HttpResponse::InternalServerError().json(TxResponse { 
+            success: false, 
+            tx_hash: None, 
+            error: Some(format!("{:?}", e)) 
+        })
     }
 }
